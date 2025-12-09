@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cessna 172 - First Person</title>
+    <title>Cessna 172 - Working Cockpit</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #87CEEB; }
         
@@ -54,9 +54,9 @@
             <p><span class="key">0</span> - Cut Engine</p>
             <p><span class="key">1 - 9</span> - Throttle %</p>
             <p><span class="key">q</span> - Full Power</p>
-            <p><span class="key">↑ / ↓</span> - Pitch Up/Down</p>
-            <p><span class="key">← / →</span> - Bank</p>
-            <p><span class="key">c</span> - Switch Camera</p>
+            <p><span class="key">↑ / ↓</span> - Pitch (Watch Yoke)</p>
+            <p><span class="key">← / →</span> - Bank (Watch Yoke)</p>
+            <p><span class="key">c</span> - Cockpit / Chase View</p>
         </div>
 
         <div id="dashboard">
@@ -106,17 +106,21 @@
         dirLight.shadow.camera.top = d; dirLight.shadow.camera.bottom = -d;
         scene.add(dirLight);
 
-        // --- 3. CESSNA 172 MODEL ---
-        let propeller;
+        // --- 3. CESSNA 172 MODEL (WITH COCKPIT) ---
+        let propeller, yokeMount, yokeWheel; 
+        
         function createCessna() {
             const planeGroup = new THREE.Group();
             
             // Materials
             const whiteMat = new THREE.MeshPhongMaterial({ color: 0xffffff, flatShading: true });
-            const glassMat = new THREE.MeshPhongMaterial({ color: 0x2c3e50, flatShading: true });
+            const greyMat = new THREE.MeshPhongMaterial({ color: 0x999999, flatShading: true });
+            const darkMat = new THREE.MeshPhongMaterial({ color: 0x222222, flatShading: true });
             const blackMat = new THREE.MeshPhongMaterial({ color: 0x111111, flatShading: true });
             const propMat = new THREE.MeshPhongMaterial({ color: 0x333333, flatShading: true });
+            const glassMat = new THREE.MeshPhongMaterial({ color: 0x2c3e50, opacity: 0.3, transparent: true });
 
+            // --- EXTERIOR ---
             // Fuselage
             const fuselage = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 4), whiteMat);
             fuselage.position.z = 0.5;
@@ -127,69 +131,96 @@
             nose.position.z = -2.25;
             nose.castShadow = true; planeGroup.add(nose);
 
-            // Cabin
-            const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 1.5), glassMat);
-            cabin.position.set(0, 0.7, 0); 
-            cabin.castShadow = true; planeGroup.add(cabin);
-
             // High Wing
             const wings = new THREE.Mesh(new THREE.BoxGeometry(10, 0.2, 1.8), whiteMat);
             wings.position.set(0, 1.0, 0.2); 
             wings.castShadow = true; planeGroup.add(wings);
 
-            // Wing Struts (Corrected: From Fuselage Bottom UP to Wing)
+            // Wing Struts
             const strutGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.2);
-            
             const strutL = new THREE.Mesh(strutGeo, whiteMat);
-            strutL.position.set(1.5, 0.2, 0.2);
-            strutL.rotation.z = -0.9; 
+            strutL.position.set(1.5, 0.2, 0.2); strutL.rotation.z = -0.9; 
             planeGroup.add(strutL);
-
             const strutR = new THREE.Mesh(strutGeo, whiteMat);
-            strutR.position.set(-1.5, 0.2, 0.2);
-            strutR.rotation.z = 0.9; 
+            strutR.position.set(-1.5, 0.2, 0.2); strutR.rotation.z = 0.9; 
             planeGroup.add(strutR);
 
             // Tail
-            const tailConeGeo = new THREE.CylinderGeometry(0.2, 0.6, 3, 8);
-            tailConeGeo.rotateX(-Math.PI/2);
-            const tailCone = new THREE.Mesh(tailConeGeo, whiteMat);
-            tailCone.position.set(0, 0, 3); 
-            planeGroup.add(tailCone);
-
+            const tailCone = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.6, 3, 8).rotateX(-Math.PI/2), whiteMat);
+            tailCone.position.set(0, 0, 3); planeGroup.add(tailCone);
             const vStab = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.5, 1), whiteMat);
-            vStab.position.set(0, 0.8, 4.2);
-            vStab.castShadow = true; planeGroup.add(vStab);
-
+            vStab.position.set(0, 0.8, 4.2); planeGroup.add(vStab);
             const hStab = new THREE.Mesh(new THREE.BoxGeometry(3, 0.1, 1), whiteMat);
-            hStab.position.set(0, 0.2, 4.2);
-            hStab.castShadow = true; planeGroup.add(hStab);
+            hStab.position.set(0, 0.2, 4.2); planeGroup.add(hStab);
 
             // Gear
             const frontStrut = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.8, 0.1), blackMat);
-            frontStrut.position.set(0, -0.8, -2);
-            planeGroup.add(frontStrut);
-            planeGroup.add(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), blackMat).translateOnAxis(new THREE.Vector3(0,-1,0), 1.2).translateOnAxis(new THREE.Vector3(0,0,-1), 2));
-
+            frontStrut.position.set(0, -0.8, -2); planeGroup.add(frontStrut);
+            planeGroup.add(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), blackMat).position.set(0,-1.2,-2));
             const rearStrutL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.8, 0.1), blackMat);
-            rearStrutL.position.set(1, -0.8, 0.5);
-            rearStrutL.rotation.z = -0.3;
-            planeGroup.add(rearStrutL);
-
+            rearStrutL.position.set(1, -0.8, 0.5); rearStrutL.rotation.z = -0.3; planeGroup.add(rearStrutL);
             const rearStrutR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.8, 0.1), blackMat);
-            rearStrutR.position.set(-1, -0.8, 0.5);
-            rearStrutR.rotation.z = 0.3;
-            planeGroup.add(rearStrutR);
+            rearStrutR.position.set(-1, -0.8, 0.5); rearStrutR.rotation.z = 0.3; planeGroup.add(rearStrutR);
 
             // Propeller
             propeller = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.15, 0.1), propMat);
-            propeller.position.set(0, 0, -3.1);
-            planeGroup.add(propeller);
+            propeller.position.set(0, 0, -3.1); planeGroup.add(propeller);
+            const spinner = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.4, 8).rotateX(-Math.PI/2), whiteMat);
+            spinner.position.set(0, 0, -3.15); planeGroup.add(spinner);
 
-            const spinner = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.4, 8), whiteMat);
-            spinner.rotation.x = -Math.PI/2;
-            spinner.position.set(0, 0, -3.15);
-            planeGroup.add(spinner);
+            // --- INTERIOR (COCKPIT) ---
+            
+            // 1. Dashboard (The Panel)
+            const panel = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.5, 0.1), greyMat);
+            panel.position.set(0, 0.3, -1.0); // In front of pilot
+            planeGroup.add(panel);
+
+            // 2. Glare Shield (Top of dash)
+            const glareShield = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.1, 0.4), blackMat);
+            glareShield.position.set(0, 0.6, -1.0);
+            planeGroup.add(glareShield);
+
+            // 3. Window Frames (A-Pillars)
+            const pillarL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.6, 0.05), whiteMat);
+            pillarL.position.set(0.5, 0.6, -1.0); pillarL.rotation.z = -0.2; pillarL.rotation.x = -0.3;
+            planeGroup.add(pillarL);
+
+            const pillarR = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.6, 0.05), whiteMat);
+            pillarR.position.set(-0.5, 0.6, -1.0); pillarR.rotation.z = 0.2; pillarR.rotation.x = -0.3;
+            planeGroup.add(pillarR);
+
+            // 4. THE YOKE (Visual Controls)
+            // The Mount moves In/Out (Pitch)
+            yokeMount = new THREE.Group();
+            yokeMount.position.set(-0.25, 0.2, -1.0); // Pilot side (Left)
+            planeGroup.add(yokeMount);
+
+            const yokeShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5).rotateX(Math.PI/2), greyMat);
+            yokeShaft.position.z = 0.25; 
+            yokeMount.add(yokeShaft);
+
+            // The Wheel rotates Left/Right (Roll)
+            yokeWheel = new THREE.Group();
+            yokeWheel.position.z = 0.5; // End of shaft
+            yokeMount.add(yokeWheel);
+
+            // Yoke Hub
+            yokeWheel.add(new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.1, 0.05), blackMat));
+            
+            // Yoke Handles (Horns)
+            const hornL = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3).rotateZ(Math.PI/2), blackMat);
+            hornL.position.set(-0.15, 0, 0); 
+            // Bend the handle down
+            const gripL = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.2), blackMat);
+            gripL.position.set(-0.3, -0.1, 0);
+            
+            const hornR = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3).rotateZ(Math.PI/2), blackMat);
+            hornR.position.set(0.15, 0, 0);
+            const gripR = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.2), blackMat);
+            gripR.position.set(0.3, -0.1, 0);
+
+            yokeWheel.add(hornL); yokeWheel.add(gripL);
+            yokeWheel.add(hornR); yokeWheel.add(gripR);
 
             return planeGroup;
         }
@@ -197,41 +228,21 @@
         scene.add(airplane);
 
         // --- 4. WORLD ---
-        const floor = new THREE.Mesh(
-            new THREE.PlaneGeometry(5000, 5000), 
-            new THREE.MeshStandardMaterial({ color: 0x579e3e }) 
-        );
-        floor.rotation.x = -Math.PI / 2;
-        floor.position.y = -50;
-        floor.receiveShadow = true;
-        scene.add(floor);
-        
-        const runway = new THREE.Mesh(
-            new THREE.PlaneGeometry(300, 4000),
-            new THREE.MeshStandardMaterial({ color: 0x444444 })
-        );
-        runway.rotation.x = -Math.PI / 2;
-        runway.position.y = -49.9;
-        runway.receiveShadow = true;
-        scene.add(runway);
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000), new THREE.MeshStandardMaterial({ color: 0x579e3e }));
+        floor.rotation.x = -Math.PI / 2; floor.position.y = -50; floor.receiveShadow = true; scene.add(floor);
+        const runway = new THREE.Mesh(new THREE.PlaneGeometry(300, 4000), new THREE.MeshStandardMaterial({ color: 0x444444 }));
+        runway.rotation.x = -Math.PI / 2; runway.position.y = -49.9; runway.receiveShadow = true; scene.add(runway);
 
-        // --- 5. PHYSICS & CONTROLS ---
+        // --- 5. LOGIC ---
         const keys = { ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false };
+        let speed = 0, throttle = 0, rotVel = { x: 0, y: 0, z: 0 }; 
+        let isCrashed = false, isLanded = true, cameraMode = 0; // 0=Chase, 1=Cockpit
         
-        let speed = 0;
-        let throttle = 0;
-        let rotVel = { x: 0, y: 0, z: 0 }; 
-        let isCrashed = false;
-        let isLanded = true;
-        let cameraMode = 0; // 0 = Third Person, 1 = First Person
+        // Tuning
+        const MAX_SPEED = 2.0, GRAVITY = 0.4, LIFT_FACTOR = 0.45;
+        const ROT_ACCEL = 0.0025, FRICTION = 0.95;    
         
-        // TUNING
-        const MAX_SPEED = 2.0;
-        const GRAVITY = 0.4;
-        const LIFT_FACTOR = 0.45; // Just slightly stronger than gravity at max speed
-        const ROT_ACCEL = 0.0025; 
-        const FRICTION = 0.95;    
-        
+        // UI
         const uiThrottle = document.getElementById('throttle-ui');
         const uiSpeed = document.getElementById('speed-ui');
         const uiAlt = document.getElementById('alt-ui');
@@ -245,13 +256,7 @@
             if (e.key === "ArrowLeft") keys.ArrowLeft = true;
             if (e.key === "ArrowRight") keys.ArrowRight = true;
             if (e.code === 'KeyR') resetGame();
-
-            // Camera Toggle
-            if (e.key.toLowerCase() === 'c') {
-                cameraMode = (cameraMode + 1) % 2;
-            }
-
-            // Throttle
+            if (e.key.toLowerCase() === 'c') cameraMode = (cameraMode + 1) % 2;
             if (e.key === '0') throttle = 0.0;
             if (e.key === 'q') throttle = 1.0;
             if (e.key >= '1' && e.key <= '9') throttle = parseInt(e.key) / 10;
@@ -266,17 +271,11 @@
         });
 
         function resetGame() {
-            airplane.position.set(0, -48, 0);
-            airplane.rotation.set(0, 0, 0);
-            speed = 0;
-            throttle = 0;
-            rotVel = { x:0, y:0, z:0 };
-            isCrashed = false;
-            isLanded = true;
+            airplane.position.set(0, -48, 0); airplane.rotation.set(0, 0, 0);
+            speed = 0; throttle = 0; rotVel = { x:0, y:0, z:0 };
+            isCrashed = false; isLanded = true;
             msgOverlay.style.display = 'none';
         }
-
-        resetGame();
 
         function updatePhysics() {
             if (isCrashed) return;
@@ -284,85 +283,61 @@
             let targetSpeed = throttle * MAX_SPEED;
             speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.015);
 
-            const authority = Math.min(speed, 1.2); 
+            // ANIMATE YOKE
+            // 1. Roll (Left/Right) - Rotate Wheel
+            let targetYokeRoll = 0;
+            if (keys.ArrowLeft) targetYokeRoll = 1.2;  // Turn Left
+            if (keys.ArrowRight) targetYokeRoll = -1.2; // Turn Right
+            yokeWheel.rotation.z = THREE.MathUtils.lerp(yokeWheel.rotation.z, targetYokeRoll, 0.1);
 
+            // 2. Pitch (Up/Down) - Slide Mount In/Out (Z axis)
+            let targetYokePitch = -1.0; // Neutral position
+            if (keys.ArrowUp) targetYokePitch = -0.8; // Pull Back (Out)
+            if (keys.ArrowDown) targetYokePitch = -1.2; // Push Forward (In)
+            yokeMount.position.z = THREE.MathUtils.lerp(yokeMount.position.z, targetYokePitch, 0.1);
+
+            // PHYSICS
+            const authority = Math.min(speed, 1.2); 
             if (!isLanded || speed > 0.2) {
-                // ARCADE PITCH: Up = Climb (Negative X)
                 if (keys.ArrowUp) rotVel.x -= ROT_ACCEL * authority; 
                 if (keys.ArrowDown) rotVel.x += ROT_ACCEL * authority;
-                
-                // BANKING
-                if (keys.ArrowLeft) {
-                    rotVel.z += ROT_ACCEL * authority; 
-                    rotVel.y += (ROT_ACCEL * 0.4) * authority;
-                }
-                if (keys.ArrowRight) {
-                    rotVel.z -= ROT_ACCEL * authority;
-                    rotVel.y -= (ROT_ACCEL * 0.4) * authority;
-                }
+                if (keys.ArrowLeft) { rotVel.z += ROT_ACCEL * authority; rotVel.y += (ROT_ACCEL * 0.4) * authority; }
+                if (keys.ArrowRight) { rotVel.z -= ROT_ACCEL * authority; rotVel.y -= (ROT_ACCEL * 0.4) * authority; }
             }
 
-            airplane.rotateX(rotVel.x);
-            airplane.rotateY(rotVel.y);
-            airplane.rotateZ(rotVel.z);
-            
-            rotVel.x *= FRICTION;
-            rotVel.y *= FRICTION;
-            rotVel.z *= FRICTION;
+            airplane.rotateX(rotVel.x); airplane.rotateY(rotVel.y); airplane.rotateZ(rotVel.z);
+            rotVel.x *= FRICTION; rotVel.y *= FRICTION; rotVel.z *= FRICTION;
 
             airplane.translateZ(-speed);
 
-            // --- GRAVITY & LIFT LOGIC (Fixed for Smooth Takeoff) ---
-            
-            // Calculate potential lift (Lift increases with speed)
-            // Note: 1.2 is a "Wing Angle of Incidence" factor allowing lift even when level
+            // Lift
             let liftForce = speed * LIFT_FACTOR * 1.2; 
-            
-            // If pitching UP, gain extra lift. If pitching DOWN, lose lift.
-            // rotVel.x is negative when pitching UP.
             liftForce -= rotVel.x * 50; 
 
             if (!isLanded) {
                 airplane.position.y -= GRAVITY;
                 airplane.position.y += liftForce;
             } else {
-                // If on ground, we only fly if Lift > Gravity
                 if (liftForce > GRAVITY) {
-                    isLanded = false; // TAKE OFF!
+                    isLanded = false; 
                     msgOverlay.style.display = 'none';
-                    airplane.position.y += (liftForce - GRAVITY); // Apply initial lift
+                    airplane.position.y += (liftForce - GRAVITY);
                 }
             }
 
-            // --- CRASH / LAND LOGIC ---
+            // Floor
             const altitude = airplane.position.y + 50;
-            // Floor clamp check
             if (altitude <= 2.2) { 
                 if (!isLanded) {
-                    // We were flying, now we hit ground. Check safety.
                     const pitch = airplane.rotation.x % (Math.PI*2);
                     const roll = airplane.rotation.z % (Math.PI*2);
-                    
-                    const isTooFast = speed > (MAX_SPEED * 0.4); 
-                    const isBadAngle = Math.abs(roll) > 0.5 || Math.abs(pitch) > 0.5;
-
-                    if (isTooFast || isBadAngle) {
-                        isCrashed = true;
-                        msgOverlay.className = 'crash';
-                        msgText.innerText = "CRASHED";
-                        msgOverlay.style.display = 'block';
+                    if (speed > (MAX_SPEED * 0.4) || Math.abs(roll) > 0.5 || Math.abs(pitch) > 0.5) {
+                        isCrashed = true; msgOverlay.className = 'crash'; msgText.innerText = "CRASHED"; msgOverlay.style.display = 'block';
                     } else {
-                        // Safe Touchdown
-                        isLanded = true;
-                        airplane.position.y = -48;
-                        airplane.rotation.z = 0;
-                        airplane.rotation.x = 0;
-                        msgOverlay.className = 'landed';
-                        msgText.innerText = "LANDED";
-                        msgOverlay.style.display = 'block';
+                        isLanded = true; airplane.position.y = -48; airplane.rotation.z = 0; airplane.rotation.x = 0;
+                        msgOverlay.className = 'landed'; msgText.innerText = "LANDED"; msgOverlay.style.display = 'block';
                     }
                 } else {
-                    // Already on ground, just clamp
                     airplane.position.y = -48;
                 }
             }
@@ -374,28 +349,29 @@
         }
 
         function updateCamera() {
-            let offset, lookOffset;
-
             if (cameraMode === 0) {
-                // THIRD PERSON (Chase)
-                offset = new THREE.Vector3(0, 8, 25); 
-                lookOffset = new THREE.Vector3(0, 0, -20);
-                
+                // THIRD PERSON - TIGHT LOCK
+                // Offset: High and behind
+                const offset = new THREE.Vector3(0, 7, 25); 
                 const targetPos = offset.applyMatrix4(airplane.matrixWorld);
-                camera.position.lerp(targetPos, 0.05); // Smooth lag
                 
+                // LERP FACTOR: 0.5 = Very stiff/tight. 0.05 = Very loose/laggy.
+                camera.position.lerp(targetPos, 0.5); 
+                
+                // Look slightly ahead
+                const lookOffset = new THREE.Vector3(0, 0, -20);
                 const lookTarget = lookOffset.applyMatrix4(airplane.matrixWorld);
                 camera.lookAt(lookTarget);
             } else {
-                // FIRST PERSON (Cockpit)
-                // Positioned slightly inside/above the fuselage
-                offset = new THREE.Vector3(0, 0.8, -0.5); 
-                lookOffset = new THREE.Vector3(0, 0, -50); // Look far ahead
-
-                // Rigid attachment (no lerp) for cockpit view
+                // FIRST PERSON (PILOT)
+                // Positioned inside the cockpit (Left Seat)
+                // x: -0.25 (Left seat), y: 0.6 (Eye level), z: 0.0 (Head position)
+                const offset = new THREE.Vector3(-0.25, 0.6, 0.0); 
                 const targetPos = offset.applyMatrix4(airplane.matrixWorld);
                 camera.position.copy(targetPos);
                 
+                // Look forward through the prop
+                const lookOffset = new THREE.Vector3(-0.25, 0.6, -20);
                 const lookTarget = lookOffset.applyMatrix4(airplane.matrixWorld);
                 camera.lookAt(lookTarget);
             }
@@ -405,11 +381,9 @@
             requestAnimationFrame(animate);
             updatePhysics();
             updateCamera();
-            
             dirLight.position.x = airplane.position.x + 50;
             dirLight.position.z = airplane.position.z + 50;
             dirLight.target = airplane;
-
             renderer.render(scene, camera);
         }
 
@@ -419,6 +393,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
+        resetGame();
         animate();
     </script>
 </body>
