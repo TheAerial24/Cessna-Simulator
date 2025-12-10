@@ -245,14 +245,14 @@
     const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
 
     // *** HUGE BASES ***
-    const bunkerGeo = new THREE.BoxGeometry(50, 40, 50); // Increased from 15 to 50
+    const bunkerGeo = new THREE.BoxGeometry(50, 40, 50); 
     const bunkerMat = new THREE.MeshPhongMaterial({ color: 0xcc0000 });
 
     function spawnTarget(index) {
         const bunker = new THREE.Mesh(bunkerGeo, bunkerMat);
         bunker.position.set(
             (Math.random() - 0.5) * MAP_SIZE,
-            20, // Raised Y so it sits on ground (half of height 40)
+            20, 
             (Math.random() - 0.5) * MAP_SIZE
         );
         bunker.castShadow = true;
@@ -390,7 +390,7 @@
             // Check collision with targets
             let hit = false;
             for (let j = 0; j < targets.length; j++) {
-                // Increased Hit Radius because bases are bigger (size 50, so radius ~35)
+                // Increased Hit Radius because bases are bigger
                 if (b.mesh.position.distanceTo(targets[j].position) < 40) {
                     hit = true;
                     score++;
@@ -430,10 +430,13 @@
             playerParams.isOnGround = false;
         }
 
-        // 6. Camera
+        // 6. Camera (FIXED: No speed lag/pull-away effect)
         const idealOffset = new THREE.Vector3(0, 8, 25);
         idealOffset.applyMatrix4(jetPivot.matrixWorld);
-        camera.position.lerp(idealOffset, 0.1);
+        
+        // Changed from 0.1 to 1.0 (Instant snap) so plane doesn't drift away at high speeds
+        camera.position.lerp(idealOffset, 1.0);
+        
         const lookTarget = new THREE.Vector3(0, 0, -50);
         lookTarget.applyMatrix4(jetPivot.matrixWorld);
         camera.lookAt(lookTarget);
