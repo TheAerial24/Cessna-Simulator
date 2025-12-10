@@ -453,10 +453,15 @@ function updatePhysics(dt) {
 
     // Thrust - Afterburner Logic
     let currentThrottle = input.throttle;
-    if (sim.afterburner) currentThrottle = 1.1;
+    let abBoost = 1.0;
+
+    if (sim.afterburner) {
+        currentThrottle = 1.1;
+        abBoost = 2.0; // Double the thrust for acceleration boost
+    }
 
     const thrustFactor = Math.max(0.4, 1 - (speed / 350)); // Jets keep thrust higher at speed
-    const thrustMag = currentThrottle * PHYSICS.maxThrust * thrustFactor;
+    const thrustMag = currentThrottle * PHYSICS.maxThrust * thrustFactor * abBoost;
     const thrustForce = forward.clone().multiplyScalar(thrustMag);
 
     // Visuals: Afterburner Flames
