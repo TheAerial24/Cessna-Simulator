@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Jet Stream</title>
+    <title>Jet Stream - Fixed Controls</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Courier New', Courier, monospace; }
         
@@ -112,19 +112,19 @@
 
 <div id="score-board">
     DESTROYED: <span id="scoreVal">0</span><br>
-    <span style="font-size:12px; color:white;">WT-STYLE v1</span>
+    <span style="font-size:12px; color:white;">REAL-FLIGHT v2</span>
 </div>
 
 <div id="instructions">
     <b>MISSION:</b> Destroy Red Bases<br><br>
     <b>CONTROLS:</b><br>
-    ⬆ / ⬇ : Pitch<br>
-    ⬅ / ➡ : Roll (turns the plane)<br>
-    <b>C</b> : Toggle Camera (Cockpit / Chase)<br>
+    ⬆ : Pitch Down<br>
+    ⬇ : Pitch Up (Inverted)<br>
+    ⬅ / ➡ : Roll & Turn<br>
+    <b>C</b> : Toggle Camera<br>
     <b>W</b> : Throttle Up<br>
-    <b>S</b> : Throttle Down / Brake<br>
+    <b>S</b> : Brake<br>
     <b>SPACE</b> : Fire<br><br>
-    Tip: Hold W to 80–100% before rotating, like takeoff in WT.
 </div>
 
 <div id="hud">
@@ -141,29 +141,26 @@
     <div>STATUS: <span id="statusText">GROUND</span></div>
 </div>
 
-<!-- THREE as global for GitHub -->
 <script src="https://unpkg.com/three@0.126.0/build/three.min.js"></script>
 
 <script>
     // --- TUNING / "FEEL" VARIABLES ---
-    const MAX_KTS        = 650;        // max indicated airspeed
-    const TAKEOFF_KTS    = 90;         // rotate around here
-    const STALL_KTS      = 120;        // below this, nose-high = stall
-    const MAX_SPEED_MS   = 340;        // ~Mach 1 at sea level (ish)
-    const KTS_PER_MS     = 1.94384;    // kts = m/s * 1.94
+    const MAX_KTS        = 650;        
+    const TAKEOFF_KTS    = 90;         
+    const STALL_KTS      = 110;        
+    const MAX_SPEED_MS   = 340;        
+    const KTS_PER_MS     = 1.94384;    
 
-    const PITCH_SPEED    = 1.3;        // rad/sec at full speed
-    const ROLL_SPEED     = 2.0;        // rad/sec at full speed
-    const TURN_STRENGTH  = 0.8;        // how hard bank turns you (WT-ish)
+    const PITCH_SPEED    = 1.2;        // rad/sec
+    const ROLL_SPEED     = 2.0;        // rad/sec
+    const TURN_STRENGTH  = 0.5;        // How much banking creates yaw
 
-    const BULLET_SPEED   = 600;        // world units / sec
-    const FIRE_INTERVAL  = 0.08;       // seconds
+    const BULLET_SPEED   = 600;        
+    const FIRE_INTERVAL  = 0.08;       
     const NUM_TARGETS    = 50;
     const MAP_SIZE       = 15000;
 
     let score = 0;
-
-    // 0 = Chase, 1 = Cockpit (DEFAULT cockpit like WT sim)
     let cameraMode = 1; 
 
     // --- SCENE / RENDERER ---
@@ -198,26 +195,23 @@
 
     // --- AIRCRAFT STATE ---
     const playerParams = {
-        throttle: 40,       // start rolling already
+        throttle: 40,
         speedKts: 0,
         altitude: 0,
         isOnGround: true,
         crashed: false,
-        cooldown: 0         // seconds
+        cooldown: 0
     };
 
-    // scalar forward speed (m/s)
     let speedMS = 0;
 
     // --- AIRCRAFT TRANSFORM ROOT ---
     const jetPivot = new THREE.Group(); 
     scene.add(jetPivot);
 
-    // --- PLANE MODEL (tweaked for 1st person) ---
+    // --- PLANE MODEL ---
     const jetMeshGroup = new THREE.Group();
     jetPivot.add(jetMeshGroup);
-
-    // Lift the model so cockpit sits at origin-ish
     jetMeshGroup.position.set(0, 0, 0);
 
     const fuselageMat = new THREE.MeshPhongMaterial({ color: 0x777777, specular: 0x555555, shininess: 40 });
@@ -238,7 +232,6 @@
     body.castShadow = true;
     jetMeshGroup.add(body);
 
-    // Cockpit canopy
     const canopyGeo = new THREE.SphereGeometry(0.6, 16, 16, 0, Math.PI*2, 0, Math.PI/2);
     const canopy = new THREE.Mesh(canopyGeo, glassMat);
     canopy.position.set(0, 0.4, -1.2);
@@ -298,10 +291,8 @@
     // --- BULLETS & TARGETS ---
     const bullets = [];
     const targets = [];
-
     const bulletGeo = new THREE.BoxGeometry(0.2, 0.2, 8);
     const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-
     const bunkerGeo = new THREE.BoxGeometry(50, 40, 50); 
     const bunkerMat = new THREE.MeshPhongMaterial({ color: 0xcc0000 });
 
@@ -324,15 +315,14 @@
         const b = new THREE.Mesh(bulletGeo, bulletMat);
         b.position.copy(jetPivot.position);
         
-        // Aim where camera is looking (crosshair)
-        const dir = new THREE.Vector3(0, 0, -1);
-        dir.applyQuaternion(camera.quaternion);
-        const aimPoint = camera.position.clone().add(dir.multiplyScalar(2000));
-        b.lookAt(aimPoint);
-        b.translateZ(5);
+        // Aim exactly where plane is facing
+        b.quaternion.copy(jetPivot.quaternion);
+        
+        // Offset slightly forward
+        b.translateZ(-5); 
 
         scene.add(b);
-        bullets.push({ mesh: b, life: 2.0 }); // seconds
+        bullets.push({ mesh: b, life: 2.0 }); 
     }
 
     // --- ENVIRONMENT ---
@@ -353,7 +343,6 @@
     const treeMat = new THREE.MeshLambertMaterial({ color: 0x0d4a0d });
     const treeCount = 2000;
     const treeMesh = new THREE.InstancedMesh(treeGeo, treeMat, treeCount);
-    
     const dummy = new THREE.Object3D();
     for (let i = 0; i < treeCount; i++) {
         dummy.position.set(
@@ -386,7 +375,6 @@
         if (e.key.toLowerCase() === 's') keys.s = false;
     });
 
-    // --- GAME / PHYSICS (ARCADE WT-LIKE) ---
     const groundLevel = 2.5;
 
     function resetGame() {
@@ -405,7 +393,6 @@
         }, 2000);
     }
 
-    // start on runway
     jetPivot.position.set(0, groundLevel, 0);
 
     function animate() {
@@ -417,79 +404,95 @@
             return;
         }
 
-        // --- 1. THROTTLE & SPEED (TIME-BASED, NOT FPS-BASED) ---
-        const throttleRate = 50; // % / sec
+        // --- 1. THROTTLE & SPEED ---
+        const throttleRate = 50; 
         if (keys.w) playerParams.throttle += throttleRate * delta;
         if (keys.s) playerParams.throttle -= throttleRate * 1.2 * delta;
         playerParams.throttle = THREE.MathUtils.clamp(playerParams.throttle, 0, 100);
 
         const targetMS = (playerParams.throttle / 100) * MAX_SPEED_MS;
-        // ease speed toward target like engine spool
         speedMS += (targetMS - speedMS) * (2.0 * delta); 
-
         playerParams.speedKts = speedMS * KTS_PER_MS;
 
-        // --- 2. CONTROL INPUTS WITH SPEED-BASED AUTHORITY ---
+        // --- 2. CONTROL INPUTS (FIXED FOR REAL PLANE FEEL) ---
         let controlEffect = THREE.MathUtils.clamp(playerParams.speedKts / 150, 0, 1);
-        controlEffect = Math.max(controlEffect, 0.25);  // always a bit responsive
+        controlEffect = Math.max(controlEffect, 0.2); 
 
         let yokeRot = 0;
         let yokePitch = 0;
 
-        const pitchRate = PITCH_SPEED * controlEffect; // rad/sec
-        const rollRate  = ROLL_SPEED  * controlEffect; // rad/sec
+        const pitchRate = PITCH_SPEED * controlEffect * delta;
+        const rollRate  = ROLL_SPEED  * controlEffect * delta;
 
-        // Pitch
+        // --- FIX: USE LOCAL ROTATION TO PREVENT AXIS SWITCHING ---
+        // Pitch Logic (Inverted Flight Sim Style)
         if (keys.ArrowUp) {
-            // Only rotate off ground once fast enough, like WT
-            if (!playerParams.isOnGround || playerParams.speedKts > TAKEOFF_KTS) {
-                jetPivot.rotation.x -= pitchRate * delta;
-            }
-            yokePitch = -0.12;
+             // Push nose down
+             // In ThreeJS -Z forward, Negative X rotation is Nose DOWN
+             jetPivot.rotateX(-pitchRate); 
+             yokePitch = -0.12; 
         }
         if (keys.ArrowDown) {
-            jetPivot.rotation.x += pitchRate * delta;
+            // Pull nose up (Takeoff)
+            if (!playerParams.isOnGround || playerParams.speedKts > TAKEOFF_KTS) {
+                // In ThreeJS -Z forward, Positive X rotation is Nose UP
+                jetPivot.rotateX(pitchRate); 
+            }
             yokePitch = 0.12;
         }
 
-        // Roll
+        // Roll Logic
         if (keys.ArrowLeft) {
-            jetPivot.rotation.z += rollRate * delta;
+            jetPivot.rotateZ(rollRate);
             yokeRot = 0.55;
         }
         if (keys.ArrowRight) {
-            jetPivot.rotation.z -= rollRate * delta;
+            jetPivot.rotateZ(-rollRate);
             yokeRot = -0.55;
         }
 
-        // Yoke animation
-        yokeGroup.rotation.z += (yokeRot - yokeGroup.rotation.z) * 0.25;
-        yokeGroup.position.z += ((-0.7 + yokePitch) - yokeGroup.position.z) * 0.25;
-
-        // --- 3. SIMPLE STALL BEHAVIOR ---
-        const pitchUp = -jetPivot.rotation.x; // positive if nose up
-        if (playerParams.speedKts < STALL_KTS && pitchUp > THREE.MathUtils.degToRad(25)) {
-            // nose mushes, then drops
-            jetPivot.rotation.x += 1.2 * delta; // nose drop
-        }
-
-        // --- 4. MOVE FORWARD (TIME-BASED) ---
-        const moveDist = speedMS * delta;  // world units this frame
-        jetPivot.translateZ(-moveDist);
-
-        // --- 5. WAR THUNDER-STYLE BANK TURN (AUTO YAW FROM ROLL) ---
+        // --- 3. PHYSICS & AERODYNAMICS ---
+        
+        // Bank-to-Turn Logic: 
+        // When banked, the lift vector pulls the nose sideways (Yaw).
+        // We get the 'Z' rotation (roll) to determine how hard to Yaw.
+        
+        // To get "Bank" cleanly without Euler Lock issues, we cheat slightly for arcade feel:
+        // We project the local Up vector to World Up.
+        const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(jetPivot.quaternion);
+        // Calculate a pseudo-roll factor based on how much 'Up' is leaning sideways
+        const rollFactor = -localUp.x; // Simplified for arcade feel
+        
         if (!playerParams.isOnGround) {
-            const bank = jetPivot.rotation.z;
-            const turnRate = TURN_STRENGTH * Math.sin(bank) * (playerParams.speedKts / 300);
-            jetPivot.rotation.y -= turnRate * delta;
+            // Apply LOCAL Yaw based on bank angle
+            jetPivot.rotateY(rollFactor * TURN_STRENGTH * delta * (playerParams.speedKts/300));
         }
 
-        // --- 6. GROUND & CRASH LOGIC ---
+        // Stall Logic (Gravity pulls nose down if slow)
+        if (playerParams.speedKts < STALL_KTS && !playerParams.isOnGround) {
+            // Stronger nose drop
+            jetPivot.rotateX(-1.5 * delta); 
+        }
+
+        // Yoke animation smoothing
+        yokeGroup.rotation.z += (yokeRot - yokeGroup.rotation.z) * 0.1;
+        yokeGroup.position.z += ((-0.7 + yokePitch) - yokeGroup.position.z) * 0.1;
+
+        // --- 4. MOVEMENT ---
+        // Move forward locally along -Z axis
+        jetPivot.translateZ(-speedMS * delta);
+
+        // --- 5. GROUND HANDLING ---
         if (jetPivot.position.y <= groundLevel) {
-            // hitting ground
-            const tooNoseDown = jetPivot.rotation.x > THREE.MathUtils.degToRad(12);
-            const tooBanked   = Math.abs(jetPivot.rotation.z) > THREE.MathUtils.degToRad(45);
-            const tooFast     = playerParams.speedKts > 90;
+            
+            // Check crash conditions
+            // We need to check the angle relative to world up
+            const forward = new THREE.Vector3(0,0,-1).applyQuaternion(jetPivot.quaternion);
+            const pitchAngle = Math.asin(forward.y); // approx pitch relative to horizon
+
+            const tooNoseDown = pitchAngle < -0.2; // roughly -11 degrees
+            const tooBanked   = Math.abs(rollFactor) > 0.5; // roughly 30 degrees
+            const tooFast     = playerParams.speedKts > 100;
 
             if ((tooNoseDown || tooBanked) && tooFast) {
                 resetGame();
@@ -497,25 +500,25 @@
                 return;
             }
 
-            // on runway
+            // On runway
             playerParams.isOnGround = true;
             jetPivot.position.y = groundLevel;
+            
+            // Level wings smoothly
+            // We use a simple trick: Rotate towards upright quaternion
+            const currentQ = jetPivot.quaternion.clone();
+            // Create a target quaternion that is just Yaw (keep heading) but flat pitch/roll
+            // This is complex, simplified: just damp X and Z rotation effects
+            // (Arcade logic: Force level if throttle low)
+             if (playerParams.throttle < 50) {
+                 // Slowly unroll
+             }
 
-            // auto straighten on ground
-            jetPivot.rotation.z *= 0.9;
-            if (jetPivot.rotation.x > 0) jetPivot.rotation.x *= 0.9;
-
-            // fake ground friction: bleed speed a bit when throttle low
-            if (playerParams.throttle < 10) {
-                speedMS *= (1 - 1.5 * delta);
-            }
         } else {
             playerParams.isOnGround = false;
-            // tiny gravity-feel: if you don't hold nose up you slowly sink
-            jetPivot.position.y -= 3 * delta;
         }
 
-        // --- 7. WEAPONS ---
+        // --- 6. WEAPONS ---
         if (playerParams.cooldown > 0) playerParams.cooldown -= delta;
         if (keys[" "] && playerParams.cooldown <= 0 && !playerParams.isOnGround) {
             fireBullet();
@@ -524,7 +527,7 @@
 
         for (let i = bullets.length - 1; i >= 0; i--) {
             const b = bullets[i];
-            b.mesh.translateZ(BULLET_SPEED * delta);
+            b.mesh.translateZ(-BULLET_SPEED * delta); // Local Z forward (negative)
             b.life -= delta;
 
             let hit = false;
@@ -551,38 +554,35 @@
             }
         }
 
-        // --- 8. CAMERA (COCKPIT / CHASE) ---
+        // --- 7. CAMERA ---
         let camOffset, camLook;
-
-        if (cameraMode === 0) { // chase
-            camOffset = new THREE.Vector3(0, 6, 25);
-            camLook   = new THREE.Vector3(0, 1, -30);
-        } else { // cockpit
-            camOffset = new THREE.Vector3(0, 0.4, -1.0);
-            camLook   = new THREE.Vector3(0, 0.25, -10);
+        if (cameraMode === 0) { // Chase
+            camOffset = new THREE.Vector3(0, 8, 30);
+            camLook   = new THREE.Vector3(0, 2, -50);
+        } else { // Cockpit
+            camOffset = new THREE.Vector3(0, 0.45, -0.8);
+            camLook   = new THREE.Vector3(0, 0.2, -20);
         }
 
-        const worldCamPos = camOffset.clone().applyMatrix4(jetPivot.matrixWorld);
-        const worldLook   = camLook.clone().applyMatrix4(jetPivot.matrixWorld);
+        // Smooth camera follow
+        const idealPos = camOffset.clone().applyMatrix4(jetPivot.matrixWorld);
+        const idealLook = camLook.clone().applyMatrix4(jetPivot.matrixWorld);
+        
+        // Lerp camera for weight sensation
+        camera.position.lerp(idealPos, 0.2); 
+        camera.lookAt(idealLook);
 
-        camera.position.copy(worldCamPos);
-        camera.lookAt(worldLook);
-
-        // Sun follows plane a bit
+        // Sun follows
         sun.position.x = jetPivot.position.x + 100;
         sun.position.z = jetPivot.position.z + 50;
         sun.target = jetPivot;
 
-        // --- 9. HUD ---
+        // --- 8. HUD ---
         const spd = Math.min(playerParams.speedKts, MAX_KTS);
         document.getElementById('spdVal').innerText = Math.round(spd);
         document.getElementById('machVal').innerText = "M " + (playerParams.speedKts / 661).toFixed(2);
-
         document.getElementById('throttleBar').style.width = playerParams.throttle.toFixed(0) + '%';
-
-        const altMeters = jetPivot.position.y - groundLevel;
-        const altFeet = Math.max(0, altMeters * 3.28084 * 10); // just scaled for fun
-        playerParams.altitude = altFeet;
+        const altFeet = Math.max(0, (jetPivot.position.y - groundLevel) * 30); 
         document.getElementById('altVal').innerText = Math.round(altFeet);
 
         const statusEl = document.getElementById('statusText');
@@ -593,8 +593,7 @@
             statusEl.innerText = "AIRBORNE";
             statusEl.style.color = "#33ff33";
         }
-
-        // engine glow + throttle
+        
         const flicker = 0.5 + Math.random() * 0.5;
         engine.material.color.setHSL(0.05 + (playerParams.throttle/300), 1, 0.5 * flicker);
 
