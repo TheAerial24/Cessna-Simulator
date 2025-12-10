@@ -204,13 +204,42 @@
     fuselage.castShadow = true;
     jetMeshGroup.add(fuselage);
 
-    // Cockpit
-    const cockpitMat = new THREE.MeshPhongMaterial({ color: 0x111111, shininess: 100 });
+    // Cockpit Glass
+    const cockpitMat = new THREE.MeshPhongMaterial({ color: 0x111111, shininess: 100, transparent: true, opacity: 0.4 });
     const cockpit = new THREE.Mesh(new THREE.ConeGeometry(0.45, 2.2, 8), cockpitMat);
     cockpit.rotation.x = Math.PI/2;
     cockpit.position.set(0, 0.35, 0.2);
     cockpit.scale.z = 0.6;
     jetMeshGroup.add(cockpit);
+
+    // --- VISUAL YOKE (THE STICK) ---
+    const yokeGroup = new THREE.Group();
+    // Position it inside the cockpit area
+    yokeGroup.position.set(0, 0.3, 0.8); 
+    jetMeshGroup.add(yokeGroup);
+
+    // Yoke Shaft (The stick going down)
+    const stickGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.4, 8);
+    const yokeMat = new THREE.MeshPhongMaterial({ color: 0x111111 });
+    const stick = new THREE.Mesh(stickGeo, yokeMat);
+    stick.position.y = -0.2;
+    yokeGroup.add(stick);
+
+    // Yoke Handle (The U shape)
+    // Left part
+    const handleL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.15, 0.04), yokeMat);
+    handleL.position.set(-0.1, 0, 0);
+    yokeGroup.add(handleL);
+    
+    // Right part
+    const handleR = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.15, 0.04), yokeMat);
+    handleR.position.set(0.1, 0, 0);
+    yokeGroup.add(handleR);
+
+    // Bottom connector
+    const handleB = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.04, 0.04), yokeMat);
+    handleB.position.set(0, -0.06, 0);
+    yokeGroup.add(handleB);
 
     // Wings
     const darkMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
@@ -244,7 +273,6 @@
     const bulletGeo = new THREE.BoxGeometry(0.2, 0.2, 4);
     const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
 
-    // *** HUGE BASES ***
     const bunkerGeo = new THREE.BoxGeometry(50, 40, 50); 
     const bunkerMat = new THREE.MeshPhongMaterial({ color: 0xcc0000 });
 
@@ -355,20 +383,33 @@
         playerParams.speedKts += (targetKts - playerParams.speedKts) * 0.02;
         let moveSpeed = (playerParams.speedKts / 300) * WORLD_SPEED_MULT;
 
-        // 2. Control Inputs (PURE PHYSICS - NO AUTO TURN)
+        // 2. Control Inputs (Visual Yoke Logic)
+        let yokeRot = 0;
+        let yokePitch = 0;
+
         if (keys.ArrowUp) {
             if (playerParams.speedKts > TAKEOFF_KTS || !playerParams.isOnGround) {
                 jetPivot.rotateX(-PITCH_SPEED);
             }
+            yokePitch = -0.1; // Pull back visually
         }
-        if (keys.ArrowDown) jetPivot.rotateX(PITCH_SPEED);
+        if (keys.ArrowDown) {
+            jetPivot.rotateX(PITCH_SPEED);
+            yokePitch = 0.1; // Push forward visually
+        }
         
         if (keys.ArrowLeft) {
-            jetPivot.rotateZ(ROLL_SPEED); // ONLY ROLL
+            jetPivot.rotateZ(ROLL_SPEED); 
+            yokeRot = 0.5; // Rotate left visually
         }
         if (keys.ArrowRight) {
-            jetPivot.rotateZ(-ROLL_SPEED); // ONLY ROLL
+            jetPivot.rotateZ(-ROLL_SPEED);
+            yokeRot = -0.5; // Rotate right visually
         }
+
+        // Animate Yoke Visuals
+        yokeGroup.rotation.z += (yokeRot - yokeGroup.rotation.z) * 0.2;
+        yokeGroup.position.z += ((0.8 + yokePitch) - yokeGroup.position.z) * 0.2;
 
         // 3. Move Aircraft
         jetPivot.translateZ(-moveSpeed);
@@ -387,16 +428,14 @@
             b.mesh.translateZ(-BULLET_SPEED); 
             b.life--;
 
-            // Check collision with targets
+            // Check collision
             let hit = false;
             for (let j = 0; j < targets.length; j++) {
-                // Increased Hit Radius because bases are bigger
                 if (b.mesh.position.distanceTo(targets[j].position) < 40) {
                     hit = true;
                     score++;
                     document.getElementById('scoreVal').innerText = score;
                     
-                    // Respawn target
                     targets[j].position.set(
                         (Math.random() - 0.5) * MAP_SIZE,
                         20,
@@ -430,11 +469,9 @@
             playerParams.isOnGround = false;
         }
 
-        // 6. Camera (FIXED: No speed lag/pull-away effect)
+        // 6. Camera (Locked Tightly)
         const idealOffset = new THREE.Vector3(0, 8, 25);
         idealOffset.applyMatrix4(jetPivot.matrixWorld);
-        
-        // Changed from 0.1 to 1.0 (Instant snap) so plane doesn't drift away at high speeds
         camera.position.lerp(idealOffset, 1.0);
         
         const lookTarget = new THREE.Vector3(0, 0, -50);
