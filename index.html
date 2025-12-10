@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Jet Stream: Ring Racer</title>
+    <title>Jet Stream: Steady Cam</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Courier New', Courier, monospace; }
         
@@ -74,7 +74,7 @@
             z-index: 10;
         }
         
-        #crashScreen, #winScreen {
+        #crashScreen {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(200, 0, 0, 0.6);
@@ -134,7 +134,9 @@
     
     const PITCH_SPEED = 0.025;
     const ROLL_SPEED = 0.045;
-    const BANK_AUTO_PITCH = 0.01; 
+    
+    // Set to 0.0 so nose doesn't drop on turns
+    const BANK_AUTO_PITCH = 0.0; 
 
     // --- GAME STATE ---
     let score = 0;
@@ -248,7 +250,6 @@
     for(let i=0; i<TRAIL_LENGTH*3; i++) trailPos[i] = 0;
 
     // --- ENVIRONMENT ---
-    // Infinite Grid illusion
     const gridHelper = new THREE.GridHelper(40000, 400, 0x555555, 0x555555);
     scene.add(gridHelper);
     
@@ -280,7 +281,6 @@
     
     function spawnRing(index) {
         const ring = new THREE.Mesh(ringGeo, ringMat);
-        // Random position, but keep them somewhat reachable
         ring.position.set(
             (Math.random() - 0.5) * 4000,
             50 + Math.random() * 400,
@@ -390,20 +390,17 @@
 
         // 5. Ring Collision
         rings.forEach((ring, idx) => {
-            ring.rotation.z += 0.02; // Rotate rings
+            ring.rotation.z += 0.02; 
             ring.rotation.y += 0.01;
             
-            // Simple distance check (Hitbox)
             if (jetPivot.position.distanceTo(ring.position) < 20) {
                 score += 100;
                 document.getElementById('scoreVal').innerText = score;
-                // Move ring
                 ring.position.set(
                      jetPivot.position.x + (Math.random()-0.5)*3000,
                      50 + Math.random()*500,
                      jetPivot.position.z - (1000 + Math.random()*2000)
                 );
-                // Speed Boost Visual
                 playerParams.speedKts += 20; 
             }
         });
@@ -425,15 +422,10 @@
         }
         trailParticles.geometry.attributes.position.needsUpdate = true;
 
-        // 7. Dynamic Camera (Smooth follow)
+        // 7. Steady Camera (No speed warping)
         const idealOffset = new THREE.Vector3(0, 7, 22);
         idealOffset.applyMatrix4(jetPivot.matrixWorld);
         
-        // FOV effect based on speed
-        const targetFOV = 60 + (playerParams.speedKts / MAX_KTS) * 20;
-        camera.fov += (targetFOV - camera.fov) * 0.1;
-        camera.updateProjectionMatrix();
-
         camera.position.lerp(idealOffset, 0.1);
         const lookTarget = new THREE.Vector3(0, 0, -50);
         lookTarget.applyMatrix4(jetPivot.matrixWorld);
@@ -444,7 +436,7 @@
         sun.position.z = jetPivot.position.z + 50;
         sun.target = jetPivot;
 
-        // 8. HUD Updates
+        // 8. HUD
         document.getElementById('spdVal').innerText = Math.round(playerParams.speedKts);
         document.getElementById('machVal').innerText = "M " + (playerParams.speedKts / 661).toFixed(2);
         document.getElementById('throttleBar').style.width = Math.min((playerParams.speedKts / MAX_KTS * 100), 100) + '%';
@@ -459,7 +451,6 @@
             statusEl.style.color = "#33ff33";
         }
 
-        // Engine flickering
         let flicker = 0.5 + Math.random() * 0.5;
         engine.material.color.setHSL(0.05 + (playerParams.throttle/300), 1, 0.5 * flicker);
 
