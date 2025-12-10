@@ -195,6 +195,7 @@
     <div class="hud-row"><span class="hud-label">THR:</span> <span id="thr-display">0</span>%</div>
     <div class="hud-row"><span class="hud-label">VSI:</span> <span id="vsi-display">0</span> fpm</div>
     <div class="hud-row"><span class="hud-label">GEAR:</span> <span id="gear-display">DN</span></div>
+    <div id="brake-warning" class="warning">BRAKE</div>
     <div id="stall-warning" class="warning">STALL</div>
 </div>
 
@@ -202,6 +203,7 @@
     <b>Controls:</b><br>
     <span class="key">W</span> / <span class="key">S</span> - Throttle (Hold W)<br>
     <span class="key">A</span> - Afterburner (Hold)<br>
+    <span class="key">Space</span> - Air Brake (Hold)<br>
     <span class="key">G</span> - Toggle Landing Gear<br>
     Arrows - Steering (Ground)<br>
     Arrows - Pitch/Roll (Air)<br>
@@ -214,6 +216,7 @@
     <p>Click to Start Engine</p>
     <p>Use <span class="key">W</span> to Throttle Up</p>
     <p>Hold <span class="key">A</span> for Afterburner</p>
+    <p>Hold <span class="key">Space</span> for Air Brake</p>
     <p>Use <span class="key">G</span> for Landing Gear</p>
     <p>Use <span class="key">Arrows</span> to Steer/Fly</p>
     <button class="btn-start">START FLIGHT</button>
@@ -314,7 +317,8 @@ function init() {
         stalled: false,
         onGround: true,
         gearDown: true,
-        afterburner: false
+        afterburner: false,
+        airBrake: false
     };
 
     const container = document.getElementById('canvas-container');
@@ -383,8 +387,9 @@ function updateInputs() {
     
     input.throttle = THREE.MathUtils.clamp(input.throttle, 0, 1);
     
-    // Check Afterburner
+    // Check Afterburner & Air Brake
     sim.afterburner = keys['KeyA'];
+    sim.airBrake = keys['Space'];
 
     // Pitch / Roll logic
     let keyPitchCmd = 0;
@@ -447,15 +452,24 @@ function updatePhysics(dt) {
 
     // Drag
     const cd = PHYSICS.dragCoeffZero + (PHYSICS.inducedDragFactor * cl * cl);
-    const dragMag = q * PHYSICS.wingArea * cd;
+    let dragMag = q * PHYSICS.wingArea * cd;
+    
+    // AIR BRAKE DRAG
+    if (sim.airBrake) {
+        dragMag *= 15.0; // Massive drag increase (was 5.0)
+    }
+
     const dragDir = sim.vel.clone().normalize().negate();
     const dragForce = (speed > 0.1) ? dragDir.multiplyScalar(dragMag) : new THREE.Vector3();
 
-    // Thrust - Afterburner Logic
+    // Thrust - Afterburner & Air Brake Logic
     let currentThrottle = input.throttle;
     let abBoost = 1.0;
 
-    if (sim.afterburner) {
+    if (sim.airBrake) {
+        // Cut throttle completely if air brake is active
+        currentThrottle = 0;
+    } else if (sim.afterburner) {
         currentThrottle = 1.1;
         abBoost = 2.0; // Double the thrust for acceleration boost
     }
@@ -464,16 +478,32 @@ function updatePhysics(dt) {
     const thrustMag = currentThrottle * PHYSICS.maxThrust * thrustFactor * abBoost;
     const thrustForce = forward.clone().multiplyScalar(thrustMag);
 
-    // Visuals: Afterburner Flames
-    if (plane && plane.userData.afterburners) {
-        plane.userData.afterburners.forEach(ab => {
-            ab.visible = sim.afterburner;
-            if (sim.afterburner) {
-                // Flicker effect
-                const s = 1.0 + Math.random() * 0.5;
-                ab.scale.set(s, s, s * (1.5 + Math.random() * 0.5));
-            }
-        });
+    // Visuals: Afterburner Flames & Air Brake Panels
+    if (plane) {
+        if (plane.userData.afterburners) {
+            plane.userData.afterburners.forEach(ab => {
+                ab.visible = sim.afterburner;
+                if (sim.afterburner) {
+                    const s = 1.0 + Math.random() * 0.5;
+                    ab.scale.set(s, s, s * (1.5 + Math.random() * 0.5));
+                }
+            });
+        }
+        
+        // Revised Air Brake Animation (Split Left/Right)
+        const brakeSpeed = 5.0 * dt;
+        const targetRot = sim.airBrake ? 0.8 : 0; // 0.8 radians outward
+
+        if (plane.userData.airBrakeL) {
+            // Left brake rotates +Y to open left
+            const currentL = plane.userData.airBrakeL.rotation.y;
+            plane.userData.airBrakeL.rotation.y += (targetRot - currentL) * brakeSpeed;
+        }
+        if (plane.userData.airBrakeR) {
+            // Right brake rotates -Y to open right
+            const currentR = plane.userData.airBrakeR.rotation.y;
+            plane.userData.airBrakeR.rotation.y += (-targetRot - currentR) * brakeSpeed;
+        }
     }
 
     // Gravity
@@ -627,7 +657,12 @@ function updateHUD() {
     // Throttle Display Logic
     let throttleVal = Math.round(input.throttle * 100);
     const thrEl = document.getElementById('thr-display');
-    if (sim.afterburner) {
+    
+    if (sim.airBrake) {
+        throttleVal = 0;
+        thrEl.style.color = '#fa0'; // Orange for brake override
+        thrEl.style.textShadow = 'none';
+    } else if (sim.afterburner) {
         throttleVal = 110;
         thrEl.style.color = 'red';
         thrEl.style.textShadow = '0 0 5px red';
@@ -645,8 +680,24 @@ function updateHUD() {
     if (sim.stalled) stallElem.style.display = 'block';
     else stallElem.style.display = 'none';
 
-    document.getElementById('throttle-fill').style.height = (sim.afterburner ? 100 : input.throttle*100)+'%';
-    document.getElementById('throttle-fill').style.backgroundColor = sim.afterburner ? 'red' : '#ffcc00';
+    // Air Brake Display
+    const brakeElem = document.getElementById('brake-warning');
+    if (sim.airBrake) brakeElem.style.display = 'block';
+    else brakeElem.style.display = 'none';
+
+    // Throttle Bar Update
+    let barHeight = input.throttle * 100;
+    let barColor = '#ffcc00';
+
+    if (sim.airBrake) {
+        barHeight = 0;
+    } else if (sim.afterburner) {
+        barHeight = 100;
+        barColor = 'red';
+    }
+
+    document.getElementById('throttle-fill').style.height = barHeight + '%';
+    document.getElementById('throttle-fill').style.backgroundColor = barColor;
 }
 
 function updateCamera() {
@@ -672,7 +723,12 @@ function resetPlane() {
     sim.stalled = false;
     sim.gearDown = true;
     sim.afterburner = false;
-    if (plane && plane.userData.gearGroup) plane.userData.gearGroup.visible = true;
+    sim.airBrake = false;
+    if (plane) {
+        if(plane.userData.gearGroup) plane.userData.gearGroup.visible = true;
+        if(plane.userData.airBrakeL) plane.userData.airBrakeL.rotation.y = 0;
+        if(plane.userData.airBrakeR) plane.userData.airBrakeR.rotation.y = 0;
+    }
     
     input.throttle = 0;
     input.pitch = 0; input.roll = 0; input.yaw = 0;
@@ -709,8 +765,44 @@ function createJetMesh() {
     cockpit.position.set(0, 0.8, -3);
     root.add(cockpit);
 
+    // Air Brakes (Tail section, flip outwards)
+    const airBrakeGeo = new THREE.BoxGeometry(0.1, 0.6, 1.5);
+    airBrakeGeo.translate(0, 0, 0.75); // Move geometry +Z so pivot (0,0,0) is at the front edge
+    
+    // Left Brake
+    const brakeL = new THREE.Mesh(airBrakeGeo, matBody);
+    brakeL.position.set(0.85, 0, 4.0); // Side of fuselage, rear section
+    root.add(brakeL);
+    
+    // Right Brake
+    const brakeR = new THREE.Mesh(airBrakeGeo, matBody);
+    brakeR.position.set(-0.85, 0, 4.0);
+    root.add(brakeR);
+    
+    // Store specifically for L/R animation
+    root.userData.airBrakeL = brakeL;
+    root.userData.airBrakeR = brakeR;
+
+    // --- ROUNDED WINGS (Replaced BoxGeometry) ---
+    const wingShape = new THREE.Shape();
+    const ww = 6, hh = 4, rr = 0.5; // Width, Height (Depth), Radius
+    // Draw rounded rectangle using arcs
+    wingShape.absarc(ww/2 - rr, hh/2 - rr, rr, 0, Math.PI / 2, false);
+    wingShape.absarc(-ww/2 + rr, hh/2 - rr, rr, Math.PI / 2, Math.PI, false);
+    wingShape.absarc(-ww/2 + rr, -hh/2 + rr, rr, Math.PI, Math.PI * 1.5, false);
+    wingShape.absarc(ww/2 - rr, -hh/2 + rr, rr, Math.PI * 1.5, Math.PI * 2, false);
+
+    const wingGeo = new THREE.ExtrudeGeometry(wingShape, {
+        depth: 0.05,        // Core thickness
+        bevelEnabled: true,
+        bevelThickness: 0.025, // Rounding on top/bottom surfaces
+        bevelSize: 0.05,       // Rounding on edges
+        bevelSegments: 5       // Smoothness
+    });
+    wingGeo.center(); 
+    wingGeo.rotateX(Math.PI / 2); // Lay flat
+
     // Left Wing (Swept Delta)
-    const wingGeo = new THREE.BoxGeometry(6, 0.1, 4);
     const wingL = new THREE.Mesh(wingGeo, matBody);
     wingL.position.set(2.5, 0, 1);
     wingL.rotation.y = -0.5; // Sweep back
@@ -724,48 +816,27 @@ function createJetMesh() {
     wingR.castShadow = true;
     root.add(wingR);
     
-    // Engines (Nacelles)
-    const engineGeo = new THREE.CylinderGeometry(0.5, 0.4, 4, 12);
-    const engineL = new THREE.Mesh(engineGeo, matBody);
-    engineL.rotation.x = -Math.PI/2;
-    engineL.position.set(1.2, 0.5, 3);
-    root.add(engineL);
-    
-    const engineR = new THREE.Mesh(engineGeo, matBody);
-    engineR.rotation.x = -Math.PI/2;
-    engineR.position.set(-1.2, 0.5, 3);
-    root.add(engineR);
-    
-    // Exhausts
-    const exGeo = new THREE.CylinderGeometry(0.4, 0.3, 0.2, 12);
-    const exL = new THREE.Mesh(exGeo, matExhaust);
-    exL.rotation.x = -Math.PI/2;
-    exL.position.set(1.2, 0.5, 5.1);
-    root.add(exL);
-    
-    const exR = new THREE.Mesh(exGeo, matExhaust);
-    exR.rotation.x = -Math.PI/2;
-    exR.position.set(-1.2, 0.5, 5.1);
-    root.add(exR);
+    // --- Single Engine Exhaust (Center Tail) ---
+    const exGeo = new THREE.CylinderGeometry(0.7, 0.6, 0.8, 16);
+    const exMesh = new THREE.Mesh(exGeo, matExhaust);
+    exMesh.rotation.x = -Math.PI/2;
+    exMesh.position.set(0, 0, 6.2); // Just behind the main fuselage
+    root.add(exMesh);
 
-    // Afterburner Effects
-    const abGeo = new THREE.ConeGeometry(0.35, 2.5, 16, 1, true);
-    // Fixed: Translate +1.25 so the Base is at 0 and Tip is at +2.5
-    abGeo.translate(0, 1.25, 0); 
-    abGeo.rotateX(Math.PI / 2); // Rotated +90 deg so +Y (Tip) points to +Z (Back)
+    // --- Single Afterburner Effect ---
+    const afterburnerGeo = new THREE.ConeGeometry(0.5, 4.0, 16, 1, true); // Larger flame
+    // Translate so base starts at 0 and points back
+    afterburnerGeo.translate(0, 2.0, 0); 
+    afterburnerGeo.rotateX(Math.PI / 2); 
+    
     const abMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
 
-    const abL = new THREE.Mesh(abGeo, abMat);
-    abL.position.set(1.2, 0.5, 5.15); // Behind engine L
-    abL.visible = false;
-    root.add(abL);
+    const flame = new THREE.Mesh(afterburnerGeo, abMat);
+    flame.position.set(0, 0, 6.5); // Centerline, behind exhaust
+    flame.visible = false;
+    root.add(flame);
 
-    const abR = new THREE.Mesh(abGeo, abMat);
-    abR.position.set(-1.2, 0.5, 5.15); // Behind engine R
-    abR.visible = false;
-    root.add(abR);
-
-    root.userData.afterburners = [abL, abR];
+    root.userData.afterburners = [flame];
 
     // Vertical Stabilizer (Tail)
     const tailGeo = new THREE.BoxGeometry(0.1, 3, 3);
