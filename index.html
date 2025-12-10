@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Arcade Jet Sim - Enhanced</title>
+    <title>Jet Stream: Ring Racer</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Courier New', Courier, monospace; }
         
@@ -11,16 +11,31 @@
             bottom: 20px;
             left: 20px;
             color: #33ff33;
-            background: rgba(0, 0, 0, 0.7);
+            background: linear-gradient(180deg, rgba(0,20,0,0.8) 0%, rgba(0,0,0,0.6) 100%);
             padding: 15px;
             border: 2px solid #33ff33;
-            border-radius: 5px;
+            border-radius: 8px;
             pointer-events: none;
             user-select: none;
             font-weight: bold;
             font-size: 16px;
             width: 280px;
-            box-shadow: 0 0 10px #33ff33;
+            box-shadow: 0 0 15px rgba(51, 255, 51, 0.3);
+        }
+
+        #score-board {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: #ffff00;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border: 2px solid #ffff00;
+            border-radius: 8px;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 0 #000;
+            pointer-events: none;
         }
 
         #instructions {
@@ -59,16 +74,16 @@
             z-index: 10;
         }
         
-        /* Crash Overlay */
-        #crashScreen {
+        #crashScreen, #winScreen {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(200, 0, 0, 0.5);
+            background: rgba(200, 0, 0, 0.6);
             display: none;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             color: white;
-            font-size: 50px;
+            font-size: 40px;
             font-weight: bold;
             text-shadow: 2px 2px 0 #000;
             z-index: 99;
@@ -77,17 +92,20 @@
 </head>
 <body>
 
-<div id="crashScreen">CRASH! RESTARTING...</div>
+<div id="crashScreen">
+    <div>CRASHED!</div>
+    <div style="font-size:20px; margin-top:10px;">Resetting Systems...</div>
+</div>
+
+<div id="score-board">SCORE: <span id="scoreVal">0</span></div>
 
 <div id="instructions">
-    <b>FLIGHT CONTROLS:</b><br>
-    ⬆ / ⬇ : Pitch (Nose)<br>
-    ⬅ / ➡ : Roll (Turn)<br>
-    <b>W</b> : Throttle UP (Afterburner)<br>
-    <b>S</b> : Throttle DOWN (Airbrake)<br>
-    <br>
-    <span style="color:orange">Takeoff: > 60 KTS + Pull Up</span><br>
-    <span style="color:#faa">Landing: Level wings + Slow descent</span>
+    <b>MISSION:</b> Fly through Yellow Rings!<br><br>
+    <b>CONTROLS:</b><br>
+    ⬆ / ⬇ : Pitch<br>
+    ⬅ / ➡ : Roll<br>
+    <b>W</b> : Throttle (Afterburner)<br>
+    <b>S</b> : Airbrake<br>
 </div>
 
 <div id="hud">
@@ -110,35 +128,45 @@
     import * as THREE from 'https://unpkg.com/three@0.126.0/build/three.module.js';
 
     // --- TUNING VARIABLES ---
-    const MAX_KTS = 400;          
-    const WORLD_SPEED_MULT = 3.0; 
+    const MAX_KTS = 500;          
+    const WORLD_SPEED_MULT = 3.5; 
     const TAKEOFF_KTS = 60;       
     
     const PITCH_SPEED = 0.025;
     const ROLL_SPEED = 0.045;
     const BANK_AUTO_PITCH = 0.01; 
 
+    // --- GAME STATE ---
+    let score = 0;
+    const rings = [];
+    const NUM_RINGS = 15;
+
     // --- SCENE SETUP ---
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87CEEB);
-    scene.fog = new THREE.Fog(0x87CEEB, 200, 3000);
+    scene.fog = new THREE.Fog(0x87CEEB, 200, 4000);
 
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 8000);
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 10000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
 
     // --- LIGHTING ---
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
-    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-    sun.position.set(50, 200, 50);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+    sun.position.set(100, 300, 100);
     sun.castShadow = true;
     sun.shadow.mapSize.width = 2048; 
     sun.shadow.mapSize.height = 2048;
     sun.shadow.camera.near = 0.5;
-    sun.shadow.camera.far = 500;
+    sun.shadow.camera.far = 1000;
+    sun.shadow.camera.left = -500;
+    sun.shadow.camera.right = 500;
+    sun.shadow.camera.top = 500;
+    sun.shadow.camera.bottom = -500;
     scene.add(sun);
 
     // --- AIRCRAFT SETUP ---
@@ -157,10 +185,10 @@
     jetPivot.add(jetMeshGroup);
     jetMeshGroup.position.z = -1.5; 
 
-    // Visuals
+    // Jet Body
     const bodyGeo = new THREE.ConeGeometry(0.6, 5, 16);
     bodyGeo.rotateX(Math.PI / 2);
-    const bodyMat = new THREE.MeshPhongMaterial({ color: 0xdddddd, specular: 0x555555, shininess: 30 });
+    const bodyMat = new THREE.MeshPhongMaterial({ color: 0xeeeeee, specular: 0x999999, shininess: 50 });
     const fuselage = new THREE.Mesh(bodyGeo, bodyMat);
     fuselage.castShadow = true;
     jetMeshGroup.add(fuselage);
@@ -168,33 +196,40 @@
     // Cockpit
     const cockpitGeo = new THREE.BufferGeometry();
     const cockpitPts = [
-        new THREE.Vector3(-0.3, 0.2, 0.5),
-        new THREE.Vector3(0.3, 0.2, 0.5),
-        new THREE.Vector3(0, 0.6, -1),
-        new THREE.Vector3(0, 0.2, 2)
+        new THREE.Vector3(-0.3, 0.2, 0.5), new THREE.Vector3(0.3, 0.2, 0.5),
+        new THREE.Vector3(0, 0.6, -1), new THREE.Vector3(0, 0.2, 2)
     ];
     cockpitGeo.setFromPoints(cockpitPts);
     cockpitGeo.computeVertexNormals();
-    const cockpitMat = new THREE.MeshPhongMaterial({ color: 0x222222, shininess: 100 });
-    const cockpit = new THREE.Mesh(new THREE.ConeGeometry(0.4, 2, 8), cockpitMat);
+    const cockpitMat = new THREE.MeshPhongMaterial({ color: 0x111111, shininess: 100, opacity: 0.9, transparent:true });
+    const cockpit = new THREE.Mesh(new THREE.ConeGeometry(0.45, 2.2, 8), cockpitMat);
     cockpit.rotation.x = Math.PI/2;
-    cockpit.position.set(0, 0.4, 0.5);
+    cockpit.position.set(0, 0.35, 0.2);
     cockpit.scale.z = 0.6;
     jetMeshGroup.add(cockpit);
 
-    const wingGeo = new THREE.BoxGeometry(6, 0.1, 2.5);
-    const darkMat = new THREE.MeshPhongMaterial({ color: 0x666666 });
+    // Wings
+    const wingGeo = new THREE.BoxGeometry(6, 0.05, 2.5);
+    const darkMat = new THREE.MeshPhongMaterial({ color: 0x444444 });
     const wings = new THREE.Mesh(wingGeo, darkMat);
     wings.position.set(0, 0, 0.5);
     wings.castShadow = true;
     jetMeshGroup.add(wings);
 
-    const tailGeo = new THREE.BoxGeometry(0.1, 1.5, 1.5);
+    // Tail
+    const tailGeo = new THREE.BoxGeometry(0.05, 1.5, 1.5);
     const tail = new THREE.Mesh(tailGeo, darkMat);
     tail.position.set(0, 0.7, 2);
     tail.castShadow = true;
     jetMeshGroup.add(tail);
 
+    const stabilizerGeo = new THREE.BoxGeometry(2.5, 0.05, 1.0);
+    const stabilizer = new THREE.Mesh(stabilizerGeo, darkMat);
+    stabilizer.position.set(0, 0, 2.2);
+    stabilizer.castShadow = true;
+    jetMeshGroup.add(stabilizer);
+
+    // Engine
     const engineGeo = new THREE.CylinderGeometry(0.3, 0.1, 0.5, 12);
     engineGeo.rotateX(Math.PI/2);
     const engineMat = new THREE.MeshBasicMaterial({ color: 0xff4400 });
@@ -203,42 +238,62 @@
     jetMeshGroup.add(engine);
 
     // --- TRAILS SYSTEM ---
-    const TRAIL_LENGTH = 40;
+    const TRAIL_LENGTH = 60;
     const trailGeom = new THREE.BufferGeometry();
     const trailPos = new Float32Array(TRAIL_LENGTH * 3);
     trailGeom.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
-    const trailMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.5, transparent: true, opacity: 0.6 });
+    const trailMat = new THREE.PointsMaterial({ color: 0xaaaaff, size: 0.8, transparent: true, opacity: 0.5 });
     const trailParticles = new THREE.Points(trailGeom, trailMat);
     scene.add(trailParticles);
-    
-    // Initialize trail positions to hidden
     for(let i=0; i<TRAIL_LENGTH*3; i++) trailPos[i] = 0;
 
     // --- ENVIRONMENT ---
-    const gridHelper = new THREE.GridHelper(20000, 400, 0x444444, 0x444444);
+    // Infinite Grid illusion
+    const gridHelper = new THREE.GridHelper(40000, 400, 0x555555, 0x555555);
     scene.add(gridHelper);
     
-    const groundGeo = new THREE.PlaneGeometry(20000, 20000);
-    const groundMat = new THREE.MeshPhongMaterial({ color: 0x228b22, depthWrite: false });
+    const groundGeo = new THREE.PlaneGeometry(40000, 40000);
+    const groundMat = new THREE.MeshPhongMaterial({ color: 0x2e8b57, depthWrite: false });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.1;
+    ground.position.y = -0.2;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // Trees (Simple instances)
-    const treeGeo = new THREE.ConeGeometry(10, 30, 8);
-    const treeMat = new THREE.MeshLambertMaterial({color: 0x115511});
-    const treeMesh = new THREE.InstancedMesh(treeGeo, treeMat, 500);
+    // Trees (Instanced)
+    const treeGeo = new THREE.ConeGeometry(15, 40, 6);
+    const treeMat = new THREE.MeshLambertMaterial({color: 0x0d4a0d});
+    const treeMesh = new THREE.InstancedMesh(treeGeo, treeMat, 800);
     const dummy = new THREE.Object3D();
-    for (let i = 0; i < 500; i++) {
-        dummy.position.set((Math.random()-0.5)*4000, 15, (Math.random()-0.5)*4000);
+    for (let i = 0; i < 800; i++) {
+        dummy.position.set((Math.random()-0.5)*8000, 20, (Math.random()-0.5)*8000);
         dummy.scale.setScalar(1 + Math.random());
         dummy.updateMatrix();
         treeMesh.setMatrixAt(i, dummy.matrix);
     }
     treeMesh.castShadow = true;
     scene.add(treeMesh);
+
+    // --- RING SYSTEM ---
+    const ringGeo = new THREE.TorusGeometry(15, 1.5, 8, 24);
+    const ringMat = new THREE.MeshPhongMaterial({ color: 0xffff00, emissive: 0xaa6600, shininess: 100 });
+    
+    function spawnRing(index) {
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        // Random position, but keep them somewhat reachable
+        ring.position.set(
+            (Math.random() - 0.5) * 4000,
+            50 + Math.random() * 400,
+            (Math.random() - 0.5) * 4000
+        );
+        ring.rotation.y = Math.random() * Math.PI;
+        scene.add(ring);
+        rings[index] = ring;
+    }
+
+    for(let i=0; i<NUM_RINGS; i++) {
+        spawnRing(i);
+    }
 
     // --- INPUT HANDLING ---
     const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, w: false, s: false };
@@ -254,7 +309,7 @@
         if(e.key.toLowerCase() === 's') keys.s = false;
     });
 
-    // --- CRASH RESET ---
+    // --- LOGIC ---
     function resetGame() {
         document.getElementById('crashScreen').style.display = 'flex';
         playerParams.crashed = true;
@@ -265,16 +320,14 @@
             jetPivot.position.set(0, 1.0, 0);
             jetPivot.rotation.set(0, 0, 0);
             playerParams.crashed = false;
+            score = 0;
+            document.getElementById('scoreVal').innerText = score;
             document.getElementById('crashScreen').style.display = 'none';
         }, 2000);
     }
 
-    // --- MAIN PHYSICS LOOP ---
-    let frameCount = 0;
-
     function animate() {
         requestAnimationFrame(animate);
-        frameCount++;
 
         if (playerParams.crashed) {
             renderer.render(scene, camera);
@@ -286,7 +339,10 @@
         if (keys.s && playerParams.throttle > 0) playerParams.throttle -= 1.5;
 
         let targetKts = (playerParams.throttle / 100) * MAX_KTS;
-        playerParams.speedKts += (targetKts - playerParams.speedKts) * 0.01;
+        // Glide logic: if throttle 0 but diving, gain speed
+        if(jetPivot.rotation.x < -0.2 && !playerParams.isOnGround) targetKts += 100;
+
+        playerParams.speedKts += (targetKts - playerParams.speedKts) * 0.02;
         let moveSpeed = (playerParams.speedKts / 300) * WORLD_SPEED_MULT;
 
         // 2. Control Inputs
@@ -299,48 +355,63 @@
         
         if (keys.ArrowLeft) {
             jetPivot.rotateZ(ROLL_SPEED);
-            jetPivot.rotateY(ROLL_SPEED * 0.4); 
+            jetPivot.rotateY(ROLL_SPEED * 0.3); 
             if(!playerParams.isOnGround) jetPivot.rotateX(-BANK_AUTO_PITCH); 
         }
         if (keys.ArrowRight) {
             jetPivot.rotateZ(-ROLL_SPEED);
-            jetPivot.rotateY(-ROLL_SPEED * 0.4); 
+            jetPivot.rotateY(-ROLL_SPEED * 0.3); 
             if(!playerParams.isOnGround) jetPivot.rotateX(-BANK_AUTO_PITCH);
         }
 
         // 3. Move Aircraft
         jetPivot.translateZ(-moveSpeed);
 
-        // 4. Ground Physics & Crash Logic
-        let groundLevel = 1.0; 
+        // 4. Ground Physics
+        let groundLevel = 2.5; 
         
         if (jetPivot.position.y <= groundLevel) {
-            // CRASH CHECK:
-            // 1. Nose pointing down (> 0.1 rad)
-            // 2. Banked too hard (> 0.5 rad)
-            // 3. Falling too fast (not implemented here strictly, but approximated by nose down)
+            // CRASH LOGIC
             if (jetPivot.rotation.x > 0.15 || Math.abs(jetPivot.rotation.z) > 0.6) {
-                if(playerParams.speedKts > 50) {
+                if(playerParams.speedKts > 80) {
                     resetGame();
                     return;
                 }
             }
-
             playerParams.isOnGround = true;
             jetPivot.position.y = groundLevel; 
             
-            // Auto-Level on ground
+            // Auto-Level
             jetPivot.rotation.z *= 0.9;
             if(jetPivot.rotation.x > 0) jetPivot.rotation.x *= 0.9;
         } else {
             playerParams.isOnGround = false;
         }
 
-        // 5. Update Trails
+        // 5. Ring Collision
+        rings.forEach((ring, idx) => {
+            ring.rotation.z += 0.02; // Rotate rings
+            ring.rotation.y += 0.01;
+            
+            // Simple distance check (Hitbox)
+            if (jetPivot.position.distanceTo(ring.position) < 20) {
+                score += 100;
+                document.getElementById('scoreVal').innerText = score;
+                // Move ring
+                ring.position.set(
+                     jetPivot.position.x + (Math.random()-0.5)*3000,
+                     50 + Math.random()*500,
+                     jetPivot.position.z - (1000 + Math.random()*2000)
+                );
+                // Speed Boost Visual
+                playerParams.speedKts += 20; 
+            }
+        });
+
+        // 6. Trails
         const engineWorldPos = new THREE.Vector3();
         engine.getWorldPosition(engineWorldPos);
         
-        // Shift trail array
         const positions = trailParticles.geometry.attributes.position.array;
         if (playerParams.speedKts > 20) {
             for (let i = (TRAIL_LENGTH - 1) * 3; i > 0; i -= 3) {
@@ -348,29 +419,36 @@
                 positions[i + 1] = positions[i - 2];
                 positions[i + 2] = positions[i - 1];
             }
-            // Add new point at engine
             positions[0] = engineWorldPos.x;
             positions[1] = engineWorldPos.y;
             positions[2] = engineWorldPos.z;
         }
         trailParticles.geometry.attributes.position.needsUpdate = true;
 
-        // 6. Camera Follow
-        const camOffset = new THREE.Vector3(0, 6, 18); // Tighter camera
-        camOffset.applyMatrix4(jetPivot.matrixWorld);
-        camera.position.lerp(camOffset, 0.1);
-        camera.lookAt(jetPivot.position);
+        // 7. Dynamic Camera (Smooth follow)
+        const idealOffset = new THREE.Vector3(0, 7, 22);
+        idealOffset.applyMatrix4(jetPivot.matrixWorld);
+        
+        // FOV effect based on speed
+        const targetFOV = 60 + (playerParams.speedKts / MAX_KTS) * 20;
+        camera.fov += (targetFOV - camera.fov) * 0.1;
+        camera.updateProjectionMatrix();
+
+        camera.position.lerp(idealOffset, 0.1);
+        const lookTarget = new THREE.Vector3(0, 0, -50);
+        lookTarget.applyMatrix4(jetPivot.matrixWorld);
+        camera.lookAt(lookTarget);
 
         // Shadows
-        sun.position.x = jetPivot.position.x + 50;
+        sun.position.x = jetPivot.position.x + 100;
         sun.position.z = jetPivot.position.z + 50;
         sun.target = jetPivot;
 
-        // 7. HUD
+        // 8. HUD Updates
         document.getElementById('spdVal').innerText = Math.round(playerParams.speedKts);
         document.getElementById('machVal').innerText = "M " + (playerParams.speedKts / 661).toFixed(2);
-        document.getElementById('throttleBar').style.width = (playerParams.speedKts / MAX_KTS * 100) + '%';
-        document.getElementById('altVal').innerText = Math.round((jetPivot.position.y - 1.0) * 10);
+        document.getElementById('throttleBar').style.width = Math.min((playerParams.speedKts / MAX_KTS * 100), 100) + '%';
+        document.getElementById('altVal').innerText = Math.round((jetPivot.position.y - 2.5) * 10);
         
         const statusEl = document.getElementById('statusText');
         if (playerParams.isOnGround) {
@@ -381,7 +459,7 @@
             statusEl.style.color = "#33ff33";
         }
 
-        // Engine flicker
+        // Engine flickering
         let flicker = 0.5 + Math.random() * 0.5;
         engine.material.color.setHSL(0.05 + (playerParams.throttle/300), 1, 0.5 * flicker);
 
