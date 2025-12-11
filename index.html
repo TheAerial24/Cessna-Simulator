@@ -85,7 +85,7 @@
         }
         .btn-start:hover { background: #1976D2; }
 
-        /* --- Throttle & Reset (visual only throttle) --- */
+        /* Throttle & Reset */
         .touch-control {
             position: absolute;
             z-index: 15;
@@ -151,8 +151,8 @@
     <div class="hud-row"><span class="hud-label">HDG:</span> <span id="hdg-display">0</span>°</div>
     <div class="hud-row"><span class="hud-label">THR:</span> <span id="thr-display">0</span>%</div>
     <div class="hud-row"><span class="hud-label">VSI:</span> <span id="vsi-display">0</span> fpm</div>
-    <!-- NEW: AOA HUD row -->
     <div class="hud-row"><span class="hud-label">AOA:</span> <span id="aoa-display">0</span>°</div>
+    <div class="hud-row"><span class="hud-label">G:</span> <span id="g-display">1.0</span></div>
     <div class="hud-row"><span class="hud-label">GEAR:</span> <span id="gear-display">DN</span></div>
     <div id="brake-warning" class="warning">BRAKE</div>
     <div id="stall-warning" class="warning">STALL</div>
@@ -162,10 +162,9 @@
     <b>Controls:</b><br>
     <span class="key">W</span> / <span class="key">S</span> - Throttle (Hold W)<br>
     <span class="key">A</span> - Afterburner (Hold)<br>
-    <span class="key">Space</span> - Air Brake (Hold)<br>
+    <span class="key">Space</span> - Air Brake / Wheel Brakes<br>
     <span class="key">G</span> - Toggle Landing Gear<br>
-    Arrows - Steering (Ground)<br>
-    Arrows - Pitch/Roll (Air)<br>
+    Arrows - Pitch/Roll & Steering<br>
     <span class="key">Q</span> / <span class="key">E</span> - Rudder<br>
     <i>Hold Down Arrow at 110kts to Fly</i>
 </div>
@@ -175,7 +174,7 @@
     <p>Click to Start</p>
     <p>Use <span class="key">W</span> to Throttle Up</p>
     <p>Hold <span class="key">A</span> for Afterburner</p>
-    <p>Hold <span class="key">Space</span> for Air Brake</p>
+    <p>Hold <span class="key">Space</span> for Air Brake / Brakes</p>
     <p>Use <span class="key">G</span> for Landing Gear</p>
     <p>Use <span class="key">Arrows</span> to Steer/Fly</p>
     <button class="btn-start">START FLIGHT</button>
@@ -197,12 +196,15 @@
 <script>
 // --- Globals ---
 let scene, camera, renderer, clock;
-let plane, terrain;
+let plane;
 let gameActive = false;
 
-// Delayed Initialization for Physics and Sim State
+// Physics & Sim State
 let PHYSICS = {};
 let sim = {};
+
+// Audio
+let stallAudio = null;
 
 const VISUALS = {
     colors: {
@@ -225,11 +227,18 @@ function startGame() {
     document.getElementById('start-screen').style.display = 'none';
     gameActive = true;
     resetPlane();
+
+    // prime audio after user interaction
+    if (!stallAudio) {
+        stallAudio = new Audio("stall_warning.mp3");
+        stallAudio.loop = true;
+        stallAudio.volume = 0.8;
+    }
 }
 
 // --- Init ---
 function init() {
-    // initialize PHYSICS here to ensure THREE is loaded
+    // Physics constants
     PHYSICS = {
         mass: 3500,          
         gravity: 9.81,       
@@ -253,13 +262,13 @@ function init() {
         
         // Ground
         wheelBrakes: 15000,    
-        wheelFriction: 0.015,
+        wheelFriction: 0.04,   // increased for stronger braking
         wheelSideFriction: 15000,
         suspensionStiffness: 65000,
         suspensionDamping: 4000
     };
 
-    // initialize sim state here
+    // Sim state
     sim = {
         pos: new THREE.Vector3(0, 1.35, 1200),
         vel: new THREE.Vector3(0, 0, 0),
@@ -271,7 +280,8 @@ function init() {
         gearDown: true,
         afterburner: false,
         airBrake: false,
-        alpha: 0 // NEW: store angle of attack (radians)
+        alpha: 0,   // AOA (radians)
+        gLoad: 1.0  // load factor
     };
 
     const container = document.getElementById('canvas-container');
@@ -281,7 +291,7 @@ function init() {
     scene.background = new THREE.Color(0x87CEEB);
     scene.fog = new THREE.Fog(0xbfd5ff, 2500, 16000);
 
-    // ULTRA: HDR-ish renderer & tone mapping
+    // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
@@ -293,7 +303,7 @@ function init() {
 
     camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 20000);
 
-    // ULTRA SKY DOME (gradient horizon)
+    // Sky Dome
     const skyGeo = new THREE.SphereGeometry(10000, 32, 15);
     const skyMat = new THREE.ShaderMaterial({
         side: THREE.BackSide,
@@ -328,7 +338,7 @@ function init() {
     const sky = new THREE.Mesh(skyGeo, skyMat);
     scene.add(sky);
 
-    // Lights (ULTRA)
+    // Lights
     const ambient = new THREE.AmbientLight(0xffffff, 0.35);
     scene.add(ambient);
     const hemi = new THREE.HemisphereLight(0x8fb7ff, 0x243018, 0.6);
@@ -378,14 +388,13 @@ function updateInputs() {
     // Throttle 
     if (keys['KeyW']) input.throttle += 0.015;
     if (keys['KeyS']) input.throttle -= 0.02;
-    
     input.throttle = THREE.MathUtils.clamp(input.throttle, 0, 1);
     
     // Afterburner & Air Brake
     sim.afterburner = keys['KeyA'];
-    sim.airBrake = keys['Space'];
+    sim.airBrake    = keys['Space'];
 
-    // Pitch / Roll logic (NOTE: Down = +1 = nose up)
+    // Pitch / Roll logic
     let keyPitchCmd = 0;
     if (keys['ArrowDown']) keyPitchCmd = 1;
     if (keys['ArrowUp']) keyPitchCmd = -1;
@@ -394,7 +403,7 @@ function updateInputs() {
     if (keys['ArrowRight']) keyRollCmd = 1; 
     if (keys['ArrowLeft']) keyRollCmd = -1;
 
-    // Arcade Steering Logic: use roll keys as yaw on ground if no rudder input
+    // Ground steering assist
     if (sim.onGround) {
         if (kYaw === 0 && Math.abs(keyRollCmd) > 0) {
             kYaw = keyRollCmd * 0.5; 
@@ -428,7 +437,6 @@ function updatePhysics(dt) {
         const geoAlpha = Math.atan2(-localVel.y, -localVel.z);
         alpha += geoAlpha;
     }
-    // Store AOA & basic stall flag
     sim.alpha = alpha;
     sim.stalled = Math.abs(alpha) > PHYSICS.stallAngle;
     
@@ -511,11 +519,16 @@ function updatePhysics(dt) {
     const gravityForce = new THREE.Vector3(0, -PHYSICS.gravity * PHYSICS.mass, 0);
 
     // Total Force
-    const totalForce = new THREE.Vector3().add(liftForce).add(dragForce).add(thrustForce).add(gravityForce);
+    const totalForce = new THREE.Vector3()
+        .add(liftForce)
+        .add(dragForce)
+        .add(thrustForce)
+        .add(gravityForce);
 
     // 5. Ground Physics
     const gearHeight = 1.35;
     const bellyHeight = 0.5;
+    const wasOnGround = sim.onGround;
     
     // Suspension Torque
     let suspensionTorque = 0;
@@ -524,6 +537,11 @@ function updatePhysics(dt) {
         sim.onGround = (sim.pos.y <= gearHeight);
         if (sim.onGround) {
             if (sim.pos.y < gearHeight) sim.pos.y = gearHeight;
+
+            // Touchdown dust trigger (on first frame of contact)
+            if (!wasOnGround && plane && plane.userData.dust) {
+                plane.userData.dust.material.opacity = 0.7;
+            }
             
             // Forward friction & braking
             if (sim.vel.y < 0) {
@@ -534,7 +552,16 @@ function updatePhysics(dt) {
             const normalForce = Math.max(0, PHYSICS.mass * PHYSICS.gravity - liftForce.y); 
             const frictionMag = normalForce * PHYSICS.wheelFriction;
             const frictionDir = sim.vel.clone().normalize().negate();
-            totalForce.add(frictionDir.multiplyScalar(frictionMag));
+            if (speed > 0.1) {
+                totalForce.add(frictionDir.multiplyScalar(frictionMag));
+            }
+
+            // Extra braking if Space held on ground
+            if (sim.airBrake && speed > 0.5) {
+                const brakeForceMag = normalForce * 0.6;
+                const brakeDir = sim.vel.clone().normalize().negate();
+                totalForce.add(brakeDir.multiplyScalar(brakeForceMag));
+            }
 
             // Side friction
             const sideVel = sim.vel.dot(right);
@@ -579,7 +606,7 @@ function updatePhysics(dt) {
     const controlPitch = input.pitch * 45000; 
     
     const effectiveQ = Math.max(q, 100); 
-    let pitchTorque = (stabilityPitch + controlPitch) * (effectiveQ/2000);
+    let pitchTorque = (stabilityPitch + controlPitch) * (effectiveQ / 2000);
     pitchTorque += suspensionTorque;
 
     const controlRoll = -input.roll * 1750 * controlScale; 
@@ -591,6 +618,9 @@ function updatePhysics(dt) {
     const accel = totalForce.divideScalar(PHYSICS.mass);
     sim.vel.add(accel.multiplyScalar(dt));
     sim.pos.add(sim.vel.clone().multiplyScalar(dt));
+
+    // G-load: along body "up" axis
+    sim.gLoad = accel.dot(up) / PHYSICS.gravity + 1.0;
 
     const angAccel = new THREE.Vector3(
         torqueLocal.x / PHYSICS.momentInertia.x,
@@ -618,10 +648,22 @@ function updatePhysics(dt) {
         sim.angularVel.z *= 0.8; 
     }
 
-    // 8. Collision
+    // 8. Collision with terrain
     if (sim.pos.y < 0) {
         sim.crashed = true;
         document.getElementById('overlay-msg').style.display = 'block';
+    }
+
+    // Wingtip vapor based on AOA
+    if (plane && plane.userData.vaporL) {
+        const vaporStrength = THREE.MathUtils.clamp(Math.abs(sim.alpha) * 8, 0, 1);
+        plane.userData.vaporL.material.opacity = vaporStrength;
+        plane.userData.vaporR.material.opacity = vaporStrength;
+    }
+
+    // Dust fade-out
+    if (plane && plane.userData.dust) {
+        plane.userData.dust.material.opacity *= 0.9;
     }
 
     // Sync Mesh
@@ -641,6 +683,7 @@ function updateHUD() {
     
     const vsi = Math.round(sim.vel.y * 60 * 3.2808);
     const aoaDeg = Math.round((sim.alpha || 0) * 57.2958);
+    const gLoad = sim.gLoad || 1.0;
 
     document.getElementById('speed-display').innerText = speed;
     document.getElementById('alt-display').innerText = alt;
@@ -666,6 +709,7 @@ function updateHUD() {
 
     document.getElementById('vsi-display').innerText = vsi;
     document.getElementById('aoa-display').innerText = aoaDeg;
+    document.getElementById('g-display').innerText = gLoad.toFixed(1);
     document.getElementById('gear-display').innerText = sim.gearDown ? "DN" : "UP";
     document.getElementById('gear-display').style.color = sim.gearDown ? "#0f0" : "#fa0";
     
@@ -674,7 +718,7 @@ function updateHUD() {
     else stallElem.style.display = 'none';
 
     const brakeElem = document.getElementById('brake-warning');
-    if (sim.airBrake) brakeElem.style.display = 'block';
+    if (sim.airBrake && sim.onGround) brakeElem.style.display = 'block';
     else brakeElem.style.display = 'none';
 
     // Throttle Bar Update (visual-only)
@@ -690,6 +734,20 @@ function updateHUD() {
 
     document.getElementById('throttle-fill').style.height = barHeight + '%';
     document.getElementById('throttle-fill').style.backgroundColor = barColor;
+
+    // Stall audio control
+    if (stallAudio) {
+        if (sim.stalled) {
+            if (stallAudio.paused) {
+                stallAudio.currentTime = 0;
+                stallAudio.play().catch(()=>{});
+            }
+        } else {
+            if (!stallAudio.paused) {
+                stallAudio.pause();
+            }
+        }
+    }
 }
 
 function updateCamera() {
@@ -712,18 +770,24 @@ function resetPlane() {
     sim.angularVel.set(0, 0, 0);
     sim.crashed = false;
     sim.stalled = false;
+    sim.onGround = true;
     sim.gearDown = true;
     sim.afterburner = false;
     sim.airBrake = false;
     sim.alpha = 0;
+    sim.gLoad = 1.0;
+
     if (plane) {
-        if(plane.userData.gearGroup) plane.userData.gearGroup.visible = true;
-        if(plane.userData.airBrakeL) plane.userData.airBrakeL.rotation.y = 0;
-        if(plane.userData.airBrakeR) plane.userData.airBrakeR.rotation.y = 0;
+        if (plane.userData.gearGroup) plane.userData.gearGroup.visible = true;
+        if (plane.userData.airBrakeL) plane.userData.airBrakeL.rotation.y = 0;
+        if (plane.userData.airBrakeR) plane.userData.airBrakeR.rotation.y = 0;
+        if (plane.userData.dust) plane.userData.dust.material.opacity = 0;
     }
     
     input.throttle = 0;
-    input.pitch = 0; input.roll = 0; input.yaw = 0;
+    input.pitch = 0; 
+    input.roll = 0; 
+    input.yaw = 0;
     
     document.getElementById('throttle-fill').style.height = '0%';
     document.getElementById('overlay-msg').style.display = 'none';
@@ -737,11 +801,6 @@ function createJetMesh() {
         color: VISUALS.colors.fuselage,
         metalness: 0.7,
         roughness: 0.28
-    });
-    const matDark = new THREE.MeshStandardMaterial({
-        color: VISUALS.colors.stripes,
-        metalness: 0.4,
-        roughness: 0.6
     });
     const matGlass = new THREE.MeshPhysicalMaterial({
         color: VISUALS.colors.glass,
@@ -761,13 +820,13 @@ function createJetMesh() {
         emissiveIntensity: 0.4
     });
 
-    // Main Fuselage (Long Cylinder)
+    // Fuselage
     const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.6, 12, 24), matBody);
     fuse.rotation.x = -Math.PI/2;
     fuse.castShadow = true;
     root.add(fuse);
     
-    // Nose Cone
+    // Nose
     const nose = new THREE.Mesh(new THREE.ConeGeometry(0.6, 3, 24), matBody);
     nose.rotation.x = -Math.PI/2;
     nose.position.z = -7.5;
@@ -781,7 +840,7 @@ function createJetMesh() {
     cockpit.castShadow = true;
     root.add(cockpit);
 
-    // Air Brakes (Tail section, flip outwards)
+    // Air Brakes
     const airBrakeGeo = new THREE.BoxGeometry(0.12, 0.6, 1.5);
     airBrakeGeo.translate(0, 0, 0.75);
     
@@ -798,7 +857,7 @@ function createJetMesh() {
     root.userData.airBrakeL = brakeL;
     root.userData.airBrakeR = brakeR;
 
-    // Rounded wings
+    // Wings
     const wingShape = new THREE.Shape();
     const ww = 6, hh = 4, rr = 0.6;
     wingShape.absarc(ww/2 - rr, hh/2 - rr, rr, 0, Math.PI / 2, false);
@@ -836,7 +895,7 @@ function createJetMesh() {
     exMesh.castShadow = true;
     root.add(exMesh);
 
-    // Afterburners (outer orange + inner blue)
+    // Afterburners
     const outerGeo = new THREE.ConeGeometry(0.5, 4.0, 16, 1, true);
     outerGeo.translate(0, 2.0, 0); 
     outerGeo.rotateX(Math.PI / 2); 
@@ -914,15 +973,50 @@ function createJetMesh() {
     mainWheelR.castShadow = true;
     gearGroup.add(mainWheelR);
 
+    // Wingtip condensation (simple quads)
+    const vaporMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.0,
+        depthWrite: false
+    });
+    const vaporGeo = new THREE.PlaneGeometry(2, 0.4);
+
+    const vaporL = new THREE.Mesh(vaporGeo, vaporMat);
+    vaporL.position.set(3.5, 0, 1);
+    vaporL.rotation.y = Math.PI / 2;
+    root.add(vaporL);
+
+    const vaporR = new THREE.Mesh(vaporGeo, vaporMat.clone());
+    vaporR.position.set(-3.5, 0, 1);
+    vaporR.rotation.y = -Math.PI / 2;
+    root.add(vaporR);
+
+    root.userData.vaporL = vaporL;
+    root.userData.vaporR = vaporR;
+
+    // Touchdown dust quad
+    const dustMat = new THREE.MeshBasicMaterial({
+        color: 0xaaaaaa,
+        transparent: true,
+        opacity: 0.0,
+        depthWrite: false
+    });
+    const dustGeo = new THREE.PlaneGeometry(6, 3);
+    dustGeo.rotateX(-Math.PI / 2);
+    const dust = new THREE.Mesh(dustGeo, dustMat);
+    dust.position.set(0, -1.2, 1);
+    root.add(dust);
+    root.userData.dust = dust;
+
     root.castShadow = true;
     root.receiveShadow = false;
 
     return root;
 }
 
-// --- World / Terrain / Runway (ULTRA) ---
+// --- World / Terrain / Runway ---
 function createWorld() {
-    // Ground with light hills away from runway
     const size = 8000;
     const segments = 160;
     const groundGeo = new THREE.PlaneGeometry(size, size, segments, segments);
@@ -959,7 +1053,7 @@ function createWorld() {
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // Runway (flat) on top of terrain
+    // Runway
     const runwayMat = new THREE.MeshStandardMaterial({
         color: 0x222428,
         roughness: 0.8,
@@ -975,7 +1069,7 @@ function createWorld() {
     runway.castShadow = true;
     scene.add(runway);
 
-    // Runway centerline markings
+    // Centerline
     const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     for (let z = -1600; z <= 1600; z += 200) {
         const mark = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 40), lineMat);
@@ -995,7 +1089,7 @@ function createWorld() {
     rightEdge.position.x = 29.5;
     scene.add(rightEdge);
 
-    // Touchdown zone (thick stripes near threshold)
+    // Touchdown zone
     const TDZmat = new THREE.MeshBasicMaterial({ color: 0xf5f5f5 });
     for (let side of [-10, 10]) {
         for (let i = 0; i < 4; i++) {
@@ -1006,14 +1100,14 @@ function createWorld() {
         }
     }
 
-    // Far grid (faded) to give scale
+    // Far grid
     const grid = new THREE.GridHelper(5000, 100, 0x555555, 0x777777);
     grid.position.y = 0.01;
     grid.material.opacity = 0.2;
     grid.material.transparent = true;
     scene.add(grid);
     
-    // Trees (better looking cones + trunks)
+    // Trees
     const trunkGeo = new THREE.CylinderGeometry(0.5, 0.7, 6, 6);
     const trunkMat = new THREE.MeshLambertMaterial({ color: 0x4a3018 });
     const leafGeo = new THREE.ConeGeometry(5, 16, 12);
@@ -1021,7 +1115,7 @@ function createWorld() {
     for (let i = 0; i < 300; i++) {
         const x = (Math.random() - 0.5) * 4500;
         const z = (Math.random() - 0.5) * 4500;
-        if (Math.abs(x) < 80 && Math.abs(z) < 1900) continue; // keep runway clear
+        if (Math.abs(x) < 80 && Math.abs(z) < 1900) continue;
 
         const tree = new THREE.Group();
 
@@ -1030,7 +1124,7 @@ function createWorld() {
         trunk.castShadow = true;
         tree.add(trunk);
 
-        const c = 0x083f14 + Math.floor(Math.random() * 0x002000);
+        const c = 0x1f7a1f + Math.floor(Math.random() * 0x003300);
         const leafMat = new THREE.MeshLambertMaterial({ color: c });
         const leaves = new THREE.Mesh(leafGeo, leafMat);
         leaves.position.y = 3 + 9;
@@ -1047,7 +1141,7 @@ function createWorld() {
 
 // --- Utils ---
 function onResize() {
-    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
