@@ -85,33 +85,12 @@
         }
         .btn-start:hover { background: #1976D2; }
 
-        /* --- Touch Controls --- */
+        /* --- Throttle & Reset (visual only throttle) --- */
         .touch-control {
             position: absolute;
             z-index: 15;
             user-select: none;
             touch-action: none;
-        }
-
-        #joystick-zone {
-            bottom: 40px;
-            right: 40px;
-            width: 150px;
-            height: 150px;
-            background: rgba(255, 255, 255, 0.1);
-            border: 2px solid rgba(255, 255, 255, 0.3);
-            border-radius: 50%;
-        }
-        #joystick-knob {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 50px;
-            height: 50px;
-            background: rgba(255, 255, 255, 0.5);
-            border-radius: 50%;
-            transform: translate(-50%, -50%);
-            pointer-events: none;
         }
 
         #throttle-container {
@@ -145,28 +124,6 @@
             text-shadow: 1px 1px 0 #000;
         }
 
-        #rudder-controls {
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 20px;
-        }
-        .control-btn {
-            width: 60px;
-            height: 60px;
-            background: rgba(255, 255, 255, 0.2);
-            border: 2px solid rgba(255, 255, 255, 0.5);
-            border-radius: 50%;
-            color: white;
-            font-weight: bold;
-            font-size: 18px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .control-btn:active { background: rgba(255, 255, 255, 0.5); }
-
         #reset-btn {
             top: 20px;
             right: 20px;
@@ -194,6 +151,8 @@
     <div class="hud-row"><span class="hud-label">HDG:</span> <span id="hdg-display">0</span>°</div>
     <div class="hud-row"><span class="hud-label">THR:</span> <span id="thr-display">0</span>%</div>
     <div class="hud-row"><span class="hud-label">VSI:</span> <span id="vsi-display">0</span> fpm</div>
+    <!-- NEW: AOA HUD row -->
+    <div class="hud-row"><span class="hud-label">AOA:</span> <span id="aoa-display">0</span>°</div>
     <div class="hud-row"><span class="hud-label">GEAR:</span> <span id="gear-display">DN</span></div>
     <div id="brake-warning" class="warning">BRAKE</div>
     <div id="stall-warning" class="warning">STALL</div>
@@ -224,18 +183,13 @@
 
 <div id="overlay-msg" onclick="resetPlane()">Crash<br>Tap to Restart</div>
 
-<!-- Touch Controls -->
+<!-- Throttle (visual only) -->
 <div id="throttle-container" class="touch-control">
     <div id="throttle-label">THR</div>
     <div id="throttle-fill"></div>
 </div>
-<div id="joystick-zone" class="touch-control">
-    <div id="joystick-knob"></div>
-</div>
-<div id="rudder-controls" class="touch-control">
-    <div class="control-btn" id="rudder-l">L</div>
-    <div class="control-btn" id="rudder-r">R</div>
-</div>
+
+<!-- Reset button -->
 <div id="reset-btn" class="touch-control" onclick="resetPlane()">R</div>
 
 <div id="canvas-container"></div>
@@ -266,7 +220,6 @@ let input = {
     pitch: 0, roll: 0, yaw: 0, throttle: 0
 };
 let keys = {};
-let touch = { joyX: 0, joyY: 0, throttle: -1, yaw: 0 };
 
 function startGame() {
     document.getElementById('start-screen').style.display = 'none';
@@ -317,7 +270,8 @@ function init() {
         onGround: true,
         gearDown: true,
         afterburner: false,
-        airBrake: false
+        airBrake: false,
+        alpha: 0 // NEW: store angle of attack (radians)
     };
 
     const container = document.getElementById('canvas-container');
@@ -403,7 +357,6 @@ function init() {
         if (e.code === 'KeyG') toggleGear();
     });
     document.addEventListener('keyup', e => keys[e.code] = false);
-    setupTouch();
 
     animate();
 }
@@ -419,23 +372,20 @@ function toggleGear() {
 function updateInputs() {
     if (!gameActive) return;
 
-    // Keyboard mixing for commands
+    // Keyboard rudder
     let kYaw = (keys['KeyQ'] ? 1 : 0) - (keys['KeyE'] ? 1 : 0);
     
     // Throttle 
     if (keys['KeyW']) input.throttle += 0.015;
     if (keys['KeyS']) input.throttle -= 0.02;
     
-    // Combine with Touch
-    if (touch.throttle >= 0) input.throttle = touch.throttle;
-    
     input.throttle = THREE.MathUtils.clamp(input.throttle, 0, 1);
     
-    // Check Afterburner & Air Brake
+    // Afterburner & Air Brake
     sim.afterburner = keys['KeyA'];
     sim.airBrake = keys['Space'];
 
-    // Pitch / Roll logic (NOTE: Down = +1 = nose up, as in your original)
+    // Pitch / Roll logic (NOTE: Down = +1 = nose up)
     let keyPitchCmd = 0;
     if (keys['ArrowDown']) keyPitchCmd = 1;
     if (keys['ArrowUp']) keyPitchCmd = -1;
@@ -444,19 +394,19 @@ function updateInputs() {
     if (keys['ArrowRight']) keyRollCmd = 1; 
     if (keys['ArrowLeft']) keyRollCmd = -1;
 
-    // Arcade Steering Logic (unchanged)
+    // Arcade Steering Logic: use roll keys as yaw on ground if no rudder input
     if (sim.onGround) {
         if (kYaw === 0 && Math.abs(keyRollCmd) > 0) {
             kYaw = keyRollCmd * 0.5; 
         }
     }
 
-    input.pitch = THREE.MathUtils.clamp(keyPitchCmd + touch.joyY, -1, 1);
-    input.roll = THREE.MathUtils.clamp(keyRollCmd + touch.joyX, -1, 1);
-    input.yaw = THREE.MathUtils.clamp(kYaw + touch.yaw, -1, 1);
+    input.pitch = THREE.MathUtils.clamp(keyPitchCmd, -1, 1);
+    input.roll  = THREE.MathUtils.clamp(keyRollCmd, -1, 1);
+    input.yaw   = THREE.MathUtils.clamp(kYaw, -1, 1);
 }
 
-// --- Physics Engine (UNCHANGED except visual stuff for burners/brakes) ---
+// --- Physics Engine ---
 function updatePhysics(dt) {
     if (sim.crashed) return;
 
@@ -478,15 +428,17 @@ function updatePhysics(dt) {
         const geoAlpha = Math.atan2(-localVel.y, -localVel.z);
         alpha += geoAlpha;
     }
+    // Store AOA & basic stall flag
+    sim.alpha = alpha;
+    sim.stalled = Math.abs(alpha) > PHYSICS.stallAngle;
     
     // 4. Aerodynamic Forces
     const q = 0.5 * PHYSICS.airDensity * (speed * speed);
     
-    // Lift (stall modeling simplified)
+    // Lift
     let cl = PHYSICS.liftSlope * alpha;
     cl = THREE.MathUtils.clamp(cl, -PHYSICS.maxLiftCoeff, PHYSICS.maxLiftCoeff);
-    sim.stalled = false; 
-    
+
     let groundEffect = 1.0;
     if (sim.pos.y < 5.0) groundEffect = 1.2;
 
@@ -520,7 +472,7 @@ function updatePhysics(dt) {
     const thrustMag = currentThrottle * PHYSICS.maxThrust * thrustFactor * abBoost;
     const thrustForce = forward.clone().multiplyScalar(thrustMag);
 
-    // Visuals: Afterburner Flames & Air Brake Panels (ULTRA)
+    // Visuals: Afterburner Flames & Air Brake Panels
     if (plane) {
         if (plane.userData.afterburners) {
             const speedFactor = THREE.MathUtils.clamp(speed / 250, 0, 1.2);
@@ -609,7 +561,7 @@ function updatePhysics(dt) {
         sim.onGround = false;
         if (sim.pos.y < bellyHeight) {
             sim.crashed = true;
-            document.getElementById('overlay-msg').innerHTML = "CRASH<br>Click to Reset";
+            document.getElementById('overlay-msg').innerHTML = "CRITICAL DAMAGE<br>Gear Up Landing";
             document.getElementById('overlay-msg').style.display = 'block';
         }
     }
@@ -688,6 +640,7 @@ function updateHUD() {
     if (hdg < 0) hdg += 360;
     
     const vsi = Math.round(sim.vel.y * 60 * 3.2808);
+    const aoaDeg = Math.round((sim.alpha || 0) * 57.2958);
 
     document.getElementById('speed-display').innerText = speed;
     document.getElementById('alt-display').innerText = alt;
@@ -712,6 +665,7 @@ function updateHUD() {
     thrEl.innerText = throttleVal;
 
     document.getElementById('vsi-display').innerText = vsi;
+    document.getElementById('aoa-display').innerText = aoaDeg;
     document.getElementById('gear-display').innerText = sim.gearDown ? "DN" : "UP";
     document.getElementById('gear-display').style.color = sim.gearDown ? "#0f0" : "#fa0";
     
@@ -723,7 +677,7 @@ function updateHUD() {
     if (sim.airBrake) brakeElem.style.display = 'block';
     else brakeElem.style.display = 'none';
 
-    // Throttle Bar Update
+    // Throttle Bar Update (visual-only)
     let barHeight = input.throttle * 100;
     let barColor = '#ffcc00';
 
@@ -761,6 +715,7 @@ function resetPlane() {
     sim.gearDown = true;
     sim.afterburner = false;
     sim.airBrake = false;
+    sim.alpha = 0;
     if (plane) {
         if(plane.userData.gearGroup) plane.userData.gearGroup.visible = true;
         if(plane.userData.airBrakeL) plane.userData.airBrakeL.rotation.y = 0;
@@ -769,7 +724,6 @@ function resetPlane() {
     
     input.throttle = 0;
     input.pitch = 0; input.roll = 0; input.yaw = 0;
-    touch.throttle = -1;
     
     document.getElementById('throttle-fill').style.height = '0%';
     document.getElementById('overlay-msg').style.display = 'none';
@@ -1092,53 +1046,6 @@ function createWorld() {
 }
 
 // --- Utils ---
-function setupTouch() {
-    const joy = document.getElementById('joystick-zone');
-    const knob = document.getElementById('joystick-knob');
-    const thr = document.getElementById('throttle-container');
-    const rL = document.getElementById('rudder-l');
-    const rR = document.getElementById('rudder-r');
-
-    // Joystick
-    joy.addEventListener('touchmove', e => {
-        e.preventDefault();
-        const rect = joy.getBoundingClientRect();
-        const t = e.targetTouches[0];
-        const cx = rect.left + rect.width/2; 
-        const cy = rect.top + rect.height/2;
-        let dx = t.clientX - cx; let dy = t.clientY - cy;
-        const dist = Math.sqrt(dx*dx+dy*dy);
-        const max = rect.width/2;
-        if(dist > max) { dx*=max/dist; dy*=max/dist; }
-        
-        knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-        touch.joyX = dx/max; 
-        touch.joyY = dy/max; 
-    }, {passive:false});
-    
-    joy.addEventListener('touchend', e => {
-        e.preventDefault();
-        touch.joyX = 0; touch.joyY = 0;
-        knob.style.transform = `translate(-50%, -50%)`;
-    });
-    
-    // Throttle
-    thr.addEventListener('touchmove', e => {
-        e.preventDefault();
-        const rect = thr.getBoundingClientRect();
-        const t = e.targetTouches[0];
-        let val = 1.0 - (t.clientY - rect.top)/rect.height;
-        touch.throttle = THREE.MathUtils.clamp(val, 0, 1);
-        document.getElementById('throttle-fill').style.height = (touch.throttle*100)+'%';
-    }, {passive:false});
-
-    // Rudder
-    rL.addEventListener('touchstart', e=>{ e.preventDefault(); touch.yaw=1; });
-    rL.addEventListener('touchend', e=>{ e.preventDefault(); touch.yaw=0; });
-    rR.addEventListener('touchstart', e=>{ e.preventDefault(); touch.yaw=-1; });
-    rR.addEventListener('touchend', e=>{ e.preventDefault(); touch.yaw=0; });
-}
-
 function onResize() {
     camera.aspect = window.innerWidth/window.innerHeight;
     camera.updateProjectionMatrix();
