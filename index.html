@@ -609,7 +609,7 @@ function updatePhysics(dt) {
         sim.onGround = false;
         if (sim.pos.y < bellyHeight) {
             sim.crashed = true;
-            document.getElementById('overlay-msg').innerHTML = "CRASH<br>";
+            document.getElementById('overlay-msg').innerHTML = "CRASH<br>Click to Reset";
             document.getElementById('overlay-msg').style.display = 'block';
         }
     }
