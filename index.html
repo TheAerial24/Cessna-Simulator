@@ -368,6 +368,16 @@ function init() {
     });
     document.addEventListener('keyup', e => keys[e.code] = false);
 
+    animate();
+}
+
+function toggleGear() {
+    sim.gearDown = !sim.gearDown;
+    if (plane && plane.userData.gearGroup) {
+        plane.userData.gearGroup.visible = sim.gearDown;
+    }
+}
+
 // --- Inputs ---
 function updateInputs() {
     if (!gameActive) return;
@@ -1171,7 +1181,6 @@ function animate() {
     updatePhysics(dt);
     updateHUD();
     updateCamera();
-    {
     renderer.render(scene, camera);
     // --- CRASH LOGIC ---
         // 1. Get the plane position (we need to find the plane object first)
