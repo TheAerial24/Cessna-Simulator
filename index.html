@@ -373,8 +373,6 @@ function init() {
 
 function toggleGear() {
     sim.gearDown = !sim.gearDown;
-    if (plane && plane.userData.gearGroup) {
-        plane.userData.gearGroup.visible = sim.gearDown;
     }
 }
 
@@ -1181,6 +1179,23 @@ function animate() {
     updatePhysics(dt);
     updateHUD();
     updateCamera();
+    // --- GEAR ANIMATION (Put this inside animate) ---
+    if (typeof plane !== 'undefined' && plane.userData.gearGroup) {
+        const gear = plane.userData.gearGroup;
+        
+        // Target: 0 = Down, 1.5 = Up (hidden)
+        const targetY = sim.gearDown ? 0 : 1.5;
+        
+        // Smoothly slide gear
+        gear.position.y += (targetY - gear.position.y) * 0.1;
+
+        // Visibility logic
+        if (sim.gearDown) {
+             gear.visible = true;
+        } else if (gear.position.y > 1.4) {
+             gear.visible = false;
+        }
+    }
     renderer.render(scene, camera);
     // --- CRASH LOGIC ---
         // 1. Get the plane position (we need to find the plane object first)
