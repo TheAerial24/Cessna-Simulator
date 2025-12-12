@@ -1182,6 +1182,48 @@ function animate() {
     updateHUD();
     updateCamera();
     renderer.render(scene, camera);
+    // --- CRASH LOGIC ---
+        // 1. Get the plane position (we need to find the plane object first)
+        // If your plane variable is named 'plane' or 'simplePlane', use that. 
+        // Based on your code, it might be inside a variable called 'physicsBody' or similar. 
+        // But usually, it is just 'plane'.
+        
+        if (typeof plane !== 'undefined') {
+             const groundH = getGroundHeight(plane.position.x, plane.position.z);
+             
+             if (plane.position.y < groundH + 2) {
+                 console.log("CRASH!");
+                 plane.position.set(0, 200, 0); // Reset high up
+                 plane.rotation.set(0, 0, 0);
+                 speed = 0; 
+             }
+        }
+}
+
+function getGroundHeight(x, z) {
+    // 1. THIS MUST MATCH YOUR GROUND SIZE EXACTLY
+    const size = 40000; 
+
+    // 2. Normalize coordinates (Math from your screenshot lines 1063-1064)
+    // We use 'z' here because in 3D world space, depth is Z.
+    const nx = x / size;
+    const ny = z / size; 
+
+    // 3. Runway Logic (Math from screenshot lines 1058-1062)
+    // If we are on the runway, the ground height is flat (0)
+    if (Math.abs(x) < 80 && Math.abs(z) < 2100) {
+        return 0; 
+    }
+
+    // 4. Hill Math (Copied from screenshot lines 1065-1066)
+    // h1 creates the big main waves
+    const h1 = Math.sin(nx * Math.PI * 4.0) * Math.cos(ny * Math.PI * 3.0) * 25;
+    
+    // h2 adds smaller bumps/noise
+    const h2 = Math.sin(nx * 2.3) * Math.sin(ny * 2.8) * 10;
+
+    // Return the total height
+    return h1 + h2;
 }
 
 // Start only when window loads
