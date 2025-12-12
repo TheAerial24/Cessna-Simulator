@@ -250,7 +250,7 @@ function init() {
         inducedDragFactor: 0.06, 
         liftSlope: 7.5,       
         maxLiftCoeff: 1.6,    
-        stallAngle: 0.35,     
+        stallAngle: 0.45,     
         wingIncidence: 0.02,  
         
         // Engine 
@@ -262,7 +262,7 @@ function init() {
         
         // Ground
         wheelBrakes: 15000,    
-        wheelFriction: 0.04,   // increased for stronger braking
+        wheelFriction: 0.09,   // increased for stronger braking
         wheelSideFriction: 15000,
         suspensionStiffness: 65000,
         suspensionDamping: 4000
@@ -739,7 +739,7 @@ function updateHUD() {
     document.getElementById('vsi-display').innerText = vsi;
     document.getElementById('aoa-display').innerText = aoaDeg;
     document.getElementById('g-display').innerText = gLoad.toFixed(1);
-    document.getElementById('gear-display').innerText = sim.gearDown ? "DN" : "UP";
+    document.getElementById('gear-display').innerText = sim.gearDown ? "DWN" : "UP";
     document.getElementById('gear-display').style.color = sim.gearDown ? "#0f0" : "#fa0";
     
     const stallElem = document.getElementById('stall-warning');
