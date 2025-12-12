@@ -540,7 +540,19 @@ function updatePhysics(dt) {
 
             // Touchdown dust trigger (on first frame of contact)
             if (!wasOnGround && plane && plane.userData.dust) {
-                plane.userData.dust.material.opacity = 0.7;
+                const touchdownSpeed = sim.vel.length();
+                plane.userData.dust.material.opacity = THREE.MathUtils.clamp(touchdownSpeed / 60, 0.2, 0.8);
+
+                // Align dust with ground track (local, stays in aircraft space)
+                const trackDirLocal = sim.vel.clone();
+                trackDirLocal.y = 0;
+                trackDirLocal.applyQuaternion(sim.quat.clone().invert());
+
+                if (trackDirLocal.lengthSq() > 0.1) {
+                    trackDirLocal.normalize();
+                    const yaw = Math.atan2(trackDirLocal.x, trackDirLocal.z);
+                    plane.userData.dust.rotation.y = yaw;
+                }
             }
             
             // Forward friction & braking
@@ -615,18 +627,16 @@ function updatePhysics(dt) {
     const torqueLocal = new THREE.Vector3(pitchTorque, controlYaw, controlRoll);
 
     // 7. Integration
+
+    // --- FIXED G-LOAD (dt-safe, correct gravity removal, counts around 1g at rest) ---
+    const accelNoDt = totalForce.clone().divideScalar(PHYSICS.mass); // net accel (includes gravity)
+    const gravityAccel = new THREE.Vector3(0, -PHYSICS.gravity, 0);
+    const properAccel = accelNoDt.clone().sub(gravityAccel);         // what you "feel"
+    sim.gLoad = THREE.MathUtils.clamp(properAccel.dot(up) / PHYSICS.gravity, -3, 9);
+
     const accel = totalForce.divideScalar(PHYSICS.mass);
     sim.vel.add(accel.multiplyScalar(dt));
     sim.pos.add(sim.vel.clone().multiplyScalar(dt));
-
-    // G-load: along body "up" axis
-    // Proper G-load (non-gravitational acceleration)
-const nonGravForce = totalForce.clone().sub(gravityForce);
-const properAccel = nonGravForce.divideScalar(PHYSICS.mass);
-sim.gLoad = THREE.MathUtils.clamp(
-    properAccel.dot(up) / PHYSICS.gravity,
-    -3, 9
-);
 
     const angAccel = new THREE.Vector3(
         torqueLocal.x / PHYSICS.momentInertia.x,
@@ -660,16 +670,29 @@ sim.gLoad = THREE.MathUtils.clamp(
         document.getElementById('overlay-msg').style.display = 'block';
     }
 
-    // Wingtip vapor based on AOA
+    // --- FIXED Wingtip vapor: correct local airflow space + correct opacity scaling ---
     if (plane && plane.userData.vaporL) {
-        const vaporStrength = THREE.MathUtils.clamp(Math.abs(sim.alpha) * 8, 0, 1);
-        plane.userData.vaporL.material.opacity = vaporStrength;
-        plane.userData.vaporR.material.opacity = vaporStrength;
+        const aoaStrength = THREE.MathUtils.clamp(Math.abs(sim.alpha) / PHYSICS.stallAngle, 0, 1);
+        const speedFactor = THREE.MathUtils.clamp(speed / 120, 0, 1);
+        const vaporOpacity = aoaStrength * speedFactor;
+
+        plane.userData.vaporL.material.opacity = vaporOpacity;
+        plane.userData.vaporR.material.opacity = vaporOpacity;
+
+        // Airflow direction in BODY/LOCAL space (because vapors are children of the plane)
+        if (speed > 1) {
+            const flowLocal = sim.vel.clone().applyQuaternion(sim.quat.clone().invert()).normalize().negate();
+            const vaporQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), flowLocal);
+            plane.userData.vaporL.quaternion.copy(vaporQuat);
+            plane.userData.vaporR.quaternion.copy(vaporQuat);
+        }
     }
 
-    // Dust fade-out
+    // Dust fade-out (FIXED: faster + clamps)
     if (plane && plane.userData.dust) {
-        plane.userData.dust.material.opacity *= 0.9;
+        plane.userData.dust.material.opacity *= 0.75;
+        plane.userData.dust.material.opacity -= 0.6 * dt;
+        if (plane.userData.dust.material.opacity < 0) plane.userData.dust.material.opacity = 0;
     }
 
     // Sync Mesh
@@ -989,12 +1012,12 @@ function createJetMesh() {
     const vaporGeo = new THREE.PlaneGeometry(2, 0.4);
 
     const vaporL = new THREE.Mesh(vaporGeo, vaporMat);
-    vaporL.position.set(3.5, 0, 1);
+    vaporL.position.set(3.6, 0, 1.8);
     vaporL.rotation.y = Math.PI / 2;
     root.add(vaporL);
 
     const vaporR = new THREE.Mesh(vaporGeo, vaporMat.clone());
-    vaporR.position.set(-3.5, 0, 1);
+    vaporR.position.set(-3.6, 0, 1.8);
     vaporR.rotation.y = -Math.PI / 2;
     root.add(vaporR);
 
