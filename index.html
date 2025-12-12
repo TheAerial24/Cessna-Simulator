@@ -8,6 +8,7 @@
     body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Courier New', Courier, monospace; touch-action: none; }
     #canvas-container { width: 100vw; height: 100vh; display: block; }
 
+    /* HUD */
     #hud {
       position: absolute; top: 20px; left: 20px;
       color: #0f0; background: rgba(0, 0, 0, 0.5);
@@ -21,6 +22,7 @@
     .warning { color: red; animation: blink 0.5s infinite; display: none; text-align: center; margin-top: 5px; }
     @keyframes blink { 50% { opacity: 0; } }
 
+    /* Help */
     #controls-help {
       position: absolute; top: 20px; right: 20px;
       text-align: right; color: white;
@@ -31,6 +33,7 @@
     }
     @media (min-width: 800px) { #controls-help { display: block; } }
 
+    /* Overlays */
     #overlay-msg, #start-screen {
       position: absolute; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
@@ -41,7 +44,6 @@
     }
     #overlay-msg { display: none; font-size: 24px; }
     #start-screen { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-
     h1 { margin: 0 0 10px 0; font-size: 28px; text-transform: uppercase; color: #87CEEB; }
     p { margin: 5px 0; color: #ddd; }
     .key { background: #333; padding: 2px 6px; border-radius: 4px; border: 1px solid #666; font-family: monospace; }
@@ -52,6 +54,7 @@
     }
     .btn-start:hover { background: #1976D2; }
 
+    /* Touch UI */
     .touch-control { position: absolute; z-index: 15; user-select: none; touch-action: none; }
 
     #throttle-container {
@@ -134,41 +137,105 @@
 <div id="canvas-container"></div>
 
 <script>
-// --- Globals ---
+/* =========================
+   Globals
+========================= */
 let scene, camera, renderer, clock;
 let plane;
 let gameActive = false;
 
-// Physics & Sim State
 let PHYSICS = {};
 let sim = {};
 
-// Audio
 let stallAudio = null;
 
 const VISUALS = {
   colors: {
     fuselage: 0xb0b7c0,
-    stripes: 0x333333,
     glass: 0x112244,
-    prop: 0x000000,
     tire: 0x111111,
     exhaust: 0x444444
   }
 };
 
-// Inputs
 let input = { pitch: 0, roll: 0, yaw: 0, throttle: 0 };
 let keys = {};
 
-// --- Terrain settings (BIGGER hills + mountains) ---
+/* =========================
+   World & Terrain Settings
+========================= */
 const WORLD = {
   size: 40000,
-  segments: 120,     // lower = faster
+  segments: 120,      // lower = faster
   runwayY: 0.2,
   groundY: -0.05
 };
 
+// runway rectangle (flat) + a buffer zone where terrain is smoothly faded down
+const RUNWAY = {
+  halfW: 80,
+  halfL: 2100,
+  fadeW: 220,   // how far out from runway edge to fade terrain down
+  fadeL: 500
+};
+
+function smoothstep(edge0, edge1, x) {
+  const t = THREE.MathUtils.clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function runwayMask(x, z) {
+  // 0 inside runway, smoothly goes to 1 outside runway+fade.
+  const ax = Math.abs(x);
+  const az = Math.abs(z);
+
+  const dx = ax - RUNWAY.halfW;
+  const dz = az - RUNWAY.halfL;
+
+  // if inside runway bounds, kill terrain completely
+  if (dx <= 0 && dz <= 0) return 0;
+
+  // fade based on how far outside the runway edges you are
+  const fx = smoothstep(0, RUNWAY.fadeW, Math.max(0, dx));
+  const fz = smoothstep(0, RUNWAY.fadeL, Math.max(0, dz));
+
+  // combine fades (either direction near runway reduces terrain)
+  return Math.max(fx, fz);
+}
+
+function isOnRunwayXZ(x, z) {
+  return (Math.abs(x) < RUNWAY.halfW && Math.abs(z) < RUNWAY.halfL);
+}
+
+// Height above "base ground" (no groundY offset). Tuned for “higher” not “wider”.
+function terrainHeightRaw(x, z) {
+  const size = WORLD.size;
+  const nx = x / size;
+  const nz = z / size;
+
+  // same general "wavelength" as your original, but taller + a 2nd octave
+  const big   = Math.sin(nx * Math.PI * 4.0) * Math.cos(nz * Math.PI * 3.0) * 85;
+  const mid   = Math.sin(nx * 2.3) * Math.sin(nz * 2.8) * 35;
+  const small = Math.sin(nx * 10.0) * Math.cos(nz * 9.0) * 10;
+
+  const raw = big + mid + small;
+
+  // keep terrain UNDER the runway by fading it down near runway edges
+  const m = runwayMask(x, z);
+  return raw * m;
+}
+
+function getGroundHeight(x, z) {
+  // runway stays perfectly flat
+  if (isOnRunwayXZ(x, z)) return WORLD.runwayY;
+
+  // terrain world height
+  return WORLD.groundY + terrainHeightRaw(x, z);
+}
+
+/* =========================
+   Start / Init
+========================= */
 function startGame() {
   document.getElementById('start-screen').style.display = 'none';
   gameActive = true;
@@ -181,44 +248,6 @@ function startGame() {
   }
 }
 
-// --- Runway helpers ---
-function isOnRunwayXZ(x, z) {
-  return (Math.abs(x) < 80 && Math.abs(z) < 2100);
-}
-
-// --- Height function: mountains + medium hills + small bumps ---
-// Returns terrain surface height (WORLD Y) *excluding* runway flat override.
-function terrainHeightWorld(x, z) {
-  const size = WORLD.size;
-
-  const nx = x / size;
-  const nz = z / size;
-
-  // Big mountains (low frequency, high amplitude)
-  const m1 = Math.sin(nx * Math.PI * 1.4) * Math.cos(nz * Math.PI * 1.1) * 260;
-  const m2 = Math.sin(nx * 2.1) * Math.cos(nz * 1.7) * 140;
-
-  // Medium hills
-  const h1 = Math.sin(nx * Math.PI * 5.0) * Math.cos(nz * Math.PI * 4.0) * 90;
-  const h2 = Math.sin(nx * 6.7) * Math.sin(nz * 7.9) * 55;
-
-  // Small bumps
-  const s1 = Math.sin(nx * 21.0) * Math.sin(nz * 19.0) * 16;
-
-  // Blend
-  const heightRaw = (m1 + m2) + (h1 + h2) + s1;
-
-  // Ground mesh offset
-  return heightRaw + WORLD.groundY;
-}
-
-// Ground height used for physics/placement (runway overrides to flat)
-function getGroundHeight(x, z) {
-  if (isOnRunwayXZ(x, z)) return WORLD.runwayY;
-  return terrainHeightWorld(x, z);
-}
-
-// --- Init ---
 function init() {
   PHYSICS = {
     mass: 3500,
@@ -236,27 +265,26 @@ function init() {
     maxThrust: 70000,
 
     momentInertia: new THREE.Vector3(12000, 15000, 12000),
-    damping: new THREE.Vector3(2.5, 1.0, 5.0),
 
-    wheelBrakes: 15000,
     wheelFriction: 0.09,
-    wheelSideFriction: 15000,
     suspensionStiffness: 65000,
     suspensionDamping: 4000
   };
 
-  // Start on runway: ground=0.2, gearHeight=1.35 => 1.55
   sim = {
     pos: new THREE.Vector3(0, WORLD.runwayY + 1.35, 1200),
     vel: new THREE.Vector3(0, 0, 0),
     quat: new THREE.Quaternion(),
     angularVel: new THREE.Vector3(0, 0, 0),
+
     crashed: false,
     stalled: false,
     onGround: true,
     gearDown: true,
+
     afterburner: false,
     airBrake: false,
+
     alpha: 0,
     gLoad: 1.0
   };
@@ -266,21 +294,21 @@ function init() {
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87CEEB);
-  scene.fog = new THREE.Fog(0xbfd5ff, 4500, 22000);
+  scene.fog = new THREE.Fog(0xbfd5ff, 3500, 20000);
 
   renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); // less lag
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.outputColorSpace = THREE.SRGBColorSpace; // r160+
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   container.appendChild(renderer.domElement);
 
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 30000);
 
-  // Sky Dome
+  // Sky
   const skyGeo = new THREE.SphereGeometry(12000, 32, 15);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -315,11 +343,8 @@ function init() {
   scene.add(new THREE.Mesh(skyGeo, skyMat));
 
   // Lights (lower shadow res = faster)
-  const ambient = new THREE.AmbientLight(0xffffff, 0.35);
-  scene.add(ambient);
-
-  const hemi = new THREE.HemisphereLight(0xe6f1ff, 0x1e2a16, 0.35);
-  scene.add(hemi);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  scene.add(new THREE.HemisphereLight(0xe6f1ff, 0x1e2a16, 0.35));
 
   const sun = new THREE.DirectionalLight(0xffffff, 1.15);
   sun.position.set(300, 600, 200);
@@ -335,6 +360,7 @@ function init() {
   scene.add(sun);
 
   createWorld();
+
   plane = createJetMesh();
   scene.add(plane);
 
@@ -353,7 +379,9 @@ function toggleGear() {
   if (plane && plane.userData.gearGroup) plane.userData.gearGroup.visible = sim.gearDown;
 }
 
-// --- Inputs ---
+/* =========================
+   Inputs
+========================= */
 function updateInputs() {
   if (!gameActive) return;
 
@@ -374,6 +402,7 @@ function updateInputs() {
   if (keys['ArrowRight']) keyRollCmd = 1;
   if (keys['ArrowLeft']) keyRollCmd = -1;
 
+  // ground steering assist
   if (sim.onGround) {
     if (kYaw === 0 && Math.abs(keyRollCmd) > 0) kYaw = keyRollCmd * 0.5;
   }
@@ -383,7 +412,9 @@ function updateInputs() {
   input.yaw   = THREE.MathUtils.clamp(kYaw, -1, 1);
 }
 
-// --- Physics Engine ---
+/* =========================
+   Physics
+========================= */
 function updatePhysics(dt) {
   if (sim.crashed) return;
 
@@ -396,12 +427,13 @@ function updatePhysics(dt) {
   const speed = sim.vel.length();
   const localVel = sim.vel.clone().applyQuaternion(sim.quat.clone().invert());
 
+  // AOA
   let alpha = PHYSICS.wingIncidence;
   if (speed > 1) alpha += Math.atan2(-localVel.y, -localVel.z);
-
   sim.alpha = alpha;
   sim.stalled = Math.abs(alpha) > PHYSICS.stallAngle;
 
+  // Aero
   const q = 0.5 * PHYSICS.airDensity * (speed * speed);
 
   let cl = PHYSICS.liftSlope * alpha;
@@ -417,6 +449,7 @@ function updatePhysics(dt) {
   if (sim.airBrake) dragMag *= 15.0;
   const dragForce = (speed > 0.1) ? sim.vel.clone().normalize().negate().multiplyScalar(dragMag) : new THREE.Vector3();
 
+  // Thrust
   let currentThrottle = input.throttle;
   let abBoost = 1.0;
 
@@ -430,7 +463,7 @@ function updatePhysics(dt) {
   const thrustFactor = Math.max(0.4, 1 - (speed / 350));
   const thrustForce = forward.clone().multiplyScalar(currentThrottle * PHYSICS.maxThrust * thrustFactor * abBoost);
 
-  // Visuals: Afterburners & airbrakes
+  // Visuals: afterburners + airbrakes
   if (plane) {
     if (plane.userData.afterburners) {
       const speedFactor = THREE.MathUtils.clamp(speed / 250, 0, 1.2);
@@ -444,7 +477,6 @@ function updatePhysics(dt) {
         else ab.scale.set(s * 0.6, s * 0.6, s * 1.4);
       });
     }
-
     const brakeSpeed = 5.0 * dt;
     const targetRot = sim.airBrake ? 0.9 : 0;
     if (plane.userData.airBrakeL) plane.userData.airBrakeL.rotation.y += (targetRot - plane.userData.airBrakeL.rotation.y) * brakeSpeed;
@@ -459,85 +491,81 @@ function updatePhysics(dt) {
     .add(thrustForce)
     .add(gravityForce);
 
-  // --- Terrain / runway collision ---
+  /* ---- Ground contact (runway OR hills) ----
+     - Gear DOWN: never crash from touching hills; you can roll on them.
+     - Gear UP: belly strike => crash (anywhere).
+  */
   const gearHeight  = 1.35;
   const bellyHeight = 0.5;
 
   const groundH = getGroundHeight(sim.pos.x, sim.pos.z);
-  const onRunway = isOnRunwayXZ(sim.pos.x, sim.pos.z);
   const wasOnGround = sim.onGround;
 
   let suspensionTorque = 0;
 
-  if (!onRunway) {
-    // INSTANT CRASH on any terrain contact off-runway (gear or belly)
-    const contactOffset = sim.gearDown ? gearHeight : bellyHeight;
-    if (sim.pos.y <= groundH + contactOffset) {
+  if (sim.gearDown) {
+    const contactY = groundH + gearHeight;
+    sim.onGround = (sim.pos.y <= contactY);
+
+    if (sim.onGround) {
+      if (sim.pos.y < contactY) sim.pos.y = contactY;
+
+      // touchdown dust (anywhere)
+      if (!wasOnGround && plane && plane.userData.dust) {
+        const touchdownSpeed = sim.vel.length();
+        plane.userData.dust.material.opacity = THREE.MathUtils.clamp(touchdownSpeed / 60, 0.2, 0.8);
+
+        const trackDirLocal = sim.vel.clone();
+        trackDirLocal.y = 0;
+        trackDirLocal.applyQuaternion(sim.quat.clone().invert());
+        if (trackDirLocal.lengthSq() > 0.1) {
+          trackDirLocal.normalize();
+          plane.userData.dust.rotation.y = Math.atan2(trackDirLocal.x, trackDirLocal.z);
+        }
+      }
+
+      // prevent sinking
+      if (sim.vel.y < 0) {
+        sim.vel.y = 0;
+        if (totalForce.y < 0) totalForce.y = 0;
+      }
+
+      // friction / braking
+      const normalForce = Math.max(0, PHYSICS.mass * PHYSICS.gravity - liftForce.y);
+      const frictionMag = normalForce * PHYSICS.wheelFriction;
+
+      if (speed > 0.1) {
+        totalForce.add(sim.vel.clone().normalize().negate().multiplyScalar(frictionMag));
+      }
+
+      if (sim.airBrake && speed > 0.5) {
+        totalForce.add(sim.vel.clone().normalize().negate().multiplyScalar(normalForce * 0.6));
+      }
+
+      // side friction
+      const sideVel = sim.vel.dot(right);
+      totalForce.add(right.clone().multiplyScalar(-sideVel * 2.0 * PHYSICS.mass * dt));
+
+      // steering
+      if (speed > 1) sim.angularVel.y += input.yaw * 0.8 * dt;
+
+      // suspension pitch spring
+      const euler = new THREE.Euler().setFromQuaternion(sim.quat, 'YXZ');
+      if (euler.x < 0) {
+        suspensionTorque += -euler.x * PHYSICS.suspensionStiffness;
+        suspensionTorque -= sim.angularVel.x * PHYSICS.suspensionDamping;
+      } else if (euler.x > 0.3) {
+        suspensionTorque += -(euler.x - 0.3) * PHYSICS.suspensionStiffness;
+      }
+    }
+  } else {
+    // gear UP: belly strike crashes anywhere
+    sim.onGround = false;
+    if (sim.pos.y < groundH + bellyHeight) {
       sim.crashed = true;
       document.getElementById('overlay-msg').innerHTML = "CRASH<br>Click to Reset";
       document.getElementById('overlay-msg').style.display = 'block';
       return;
-    }
-    sim.onGround = false;
-  } else {
-    // Normal runway ground behavior
-    if (sim.gearDown) {
-      const contactY = groundH + gearHeight;
-      sim.onGround = (sim.pos.y <= contactY);
-
-      if (sim.onGround) {
-        if (sim.pos.y < contactY) sim.pos.y = contactY;
-
-        if (!wasOnGround && plane && plane.userData.dust) {
-          const touchdownSpeed = sim.vel.length();
-          plane.userData.dust.material.opacity = THREE.MathUtils.clamp(touchdownSpeed / 60, 0.2, 0.8);
-
-          const trackDirLocal = sim.vel.clone();
-          trackDirLocal.y = 0;
-          trackDirLocal.applyQuaternion(sim.quat.clone().invert());
-          if (trackDirLocal.lengthSq() > 0.1) {
-            trackDirLocal.normalize();
-            plane.userData.dust.rotation.y = Math.atan2(trackDirLocal.x, trackDirLocal.z);
-          }
-        }
-
-        if (sim.vel.y < 0) {
-          sim.vel.y = 0;
-          if (totalForce.y < 0) totalForce.y = 0;
-        }
-
-        const normalForce = Math.max(0, PHYSICS.mass * PHYSICS.gravity - liftForce.y);
-        const frictionMag = normalForce * PHYSICS.wheelFriction;
-
-        if (speed > 0.1) {
-          totalForce.add(sim.vel.clone().normalize().negate().multiplyScalar(frictionMag));
-        }
-
-        if (sim.airBrake && speed > 0.5) {
-          totalForce.add(sim.vel.clone().normalize().negate().multiplyScalar(normalForce * 0.6));
-        }
-
-        const sideVel = sim.vel.dot(right);
-        totalForce.add(right.clone().multiplyScalar(-sideVel * 2.0 * PHYSICS.mass * dt));
-
-        if (speed > 1) sim.angularVel.y += input.yaw * 0.8 * dt;
-
-        const euler = new THREE.Euler().setFromQuaternion(sim.quat, 'YXZ');
-        if (euler.x < 0) {
-          suspensionTorque += -euler.x * PHYSICS.suspensionStiffness;
-          suspensionTorque -= sim.angularVel.x * PHYSICS.suspensionDamping;
-        } else if (euler.x > 0.3) {
-          suspensionTorque += -(euler.x - 0.3) * PHYSICS.suspensionStiffness;
-        }
-      }
-    } else {
-      sim.onGround = false;
-      if (sim.pos.y < groundH + bellyHeight) {
-        sim.crashed = true;
-        document.getElementById('overlay-msg').innerHTML = "CRASH<br>Click to Reset";
-        document.getElementById('overlay-msg').style.display = 'block';
-        return;
-      }
     }
   }
 
@@ -584,6 +612,7 @@ function updatePhysics(dt) {
     sim.quat.multiply(deltaRot).normalize();
   }
 
+  // keep wings mostly level when on ground (anywhere)
   if (sim.onGround) {
     const euler = new THREE.Euler().setFromQuaternion(sim.quat, 'YXZ');
     euler.z *= 0.95;
@@ -591,6 +620,7 @@ function updatePhysics(dt) {
     sim.angularVel.z *= 0.8;
   }
 
+  // wingtip vapor
   if (plane && plane.userData.vaporL) {
     const aoaStrength = THREE.MathUtils.clamp(Math.abs(sim.alpha) / PHYSICS.stallAngle, 0, 1);
     const speedFactor = THREE.MathUtils.clamp(speed / 120, 0, 1);
@@ -607,23 +637,27 @@ function updatePhysics(dt) {
     }
   }
 
+  // dust fade
   if (plane && plane.userData.dust) {
     plane.userData.dust.material.opacity *= 0.75;
     plane.userData.dust.material.opacity -= 0.6 * dt;
     if (plane.userData.dust.material.opacity < 0) plane.userData.dust.material.opacity = 0;
   }
 
+  // Sync mesh
   plane.position.copy(sim.pos);
   plane.quaternion.copy(sim.quat);
 }
 
-// --- HUD ---
+/* =========================
+   HUD + Camera + Reset
+========================= */
 function updateHUD() {
   if (!sim.vel) return;
 
-  const speed = Math.round(sim.vel.length() * 1.9438);
+  const spd = Math.round(sim.vel.length() * 1.9438);
 
-  // altitude above *terrain/runway* under you (so runway reads ~0)
+  // altitude above ground under you (with gear height reference)
   const groundBelow = getGroundHeight(sim.pos.x, sim.pos.z);
   const alt = Math.round((sim.pos.y - (groundBelow + 1.35)) * 3.2808);
 
@@ -635,7 +669,7 @@ function updateHUD() {
   const aoaDeg = Math.round((sim.alpha || 0) * 57.2958);
   const gLoad = sim.gLoad || 1.0;
 
-  document.getElementById('speed-display').innerText = speed;
+  document.getElementById('speed-display').innerText = spd;
   document.getElementById('alt-display').innerText = alt;
   document.getElementById('hdg-display').innerText = hdg;
 
@@ -659,6 +693,7 @@ function updateHUD() {
   document.getElementById('vsi-display').innerText = vsi;
   document.getElementById('aoa-display').innerText = aoaDeg;
   document.getElementById('g-display').innerText = gLoad.toFixed(1);
+
   document.getElementById('gear-display').innerText = sim.gearDown ? "DWN" : "UP";
   document.getElementById('gear-display').style.color = sim.gearDown ? "#0f0" : "#fa0";
 
@@ -669,7 +704,6 @@ function updateHUD() {
   let barColor = '#ffcc00';
   if (sim.airBrake) barHeight = 0;
   else if (sim.afterburner) { barHeight = 100; barColor = 'red'; }
-
   document.getElementById('throttle-fill').style.height = barHeight + '%';
   document.getElementById('throttle-fill').style.backgroundColor = barColor;
 
@@ -687,8 +721,7 @@ function updateHUD() {
 
 function updateCamera() {
   if (!sim.pos) return;
-  const offset = new THREE.Vector3(0, 6, 28);
-  offset.applyQuaternion(sim.quat);
+  const offset = new THREE.Vector3(0, 6, 28).applyQuaternion(sim.quat);
   const target = sim.pos.clone().add(offset);
   if (target.y < 2) target.y = 2;
   camera.position.lerp(target, 0.1);
@@ -696,8 +729,6 @@ function updateCamera() {
 }
 
 function resetPlane() {
-  if (!sim.pos) return;
-
   sim.pos.set(0, WORLD.runwayY + 1.35, 1200);
   sim.vel.set(0, 0, 0);
   sim.quat.set(0, 0, 0, 1);
@@ -727,13 +758,18 @@ function resetPlane() {
   document.getElementById('overlay-msg').style.display = 'none';
 }
 
-// --- Jet mesh (same as before) ---
+/* =========================
+   Jet Mesh
+========================= */
 function createJetMesh() {
   const root = new THREE.Group();
 
-  const matBody = new THREE.MeshStandardMaterial({ color: VISUALS.colors.fuselage, metalness: 0.7, roughness: 0.28 });
+  const matBody = new THREE.MeshStandardMaterial({
+    color: VISUALS.colors.fuselage, metalness: 0.7, roughness: 0.28
+  });
   const matGlass = new THREE.MeshPhysicalMaterial({
-    color: VISUALS.colors.glass, metalness: 0.0, roughness: 0.1,
+    color: VISUALS.colors.glass,
+    metalness: 0.0, roughness: 0.1,
     transparent: true, opacity: 0.5, transmission: 0.7,
     clearcoat: 1.0, clearcoatRoughness: 0.15
   });
@@ -751,6 +787,7 @@ function createJetMesh() {
   const cockpit = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1.5, 8, 16), matGlass);
   cockpit.rotation.x = -Math.PI/2; cockpit.position.set(0, 0.8, -3); cockpit.castShadow = true; root.add(cockpit);
 
+  // Air brakes
   const airBrakeGeo = new THREE.BoxGeometry(0.12, 0.6, 1.5);
   airBrakeGeo.translate(0, 0, 0.75);
 
@@ -763,6 +800,7 @@ function createJetMesh() {
   root.userData.airBrakeL = brakeL;
   root.userData.airBrakeR = brakeR;
 
+  // Wings
   const wingShape = new THREE.Shape();
   const ww = 6, hh = 4, rr = 0.6;
   wingShape.absarc(ww/2 - rr, hh/2 - rr, rr, 0, Math.PI / 2, false);
@@ -781,10 +819,11 @@ function createJetMesh() {
   const wingR = new THREE.Mesh(wingGeo, matBody);
   wingR.position.set(-2.5, 0, 1); wingR.rotation.y = 0.5; wingR.castShadow = true; root.add(wingR);
 
-  const exGeo = new THREE.CylinderGeometry(0.7, 0.6, 0.8, 20);
-  const exMesh = new THREE.Mesh(exGeo, matExhaust);
+  // Exhaust
+  const exMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.6, 0.8, 20), matExhaust);
   exMesh.rotation.x = -Math.PI/2; exMesh.position.set(0, 0, 6.2); exMesh.castShadow = true; root.add(exMesh);
 
+  // Afterburners
   const outerGeo = new THREE.ConeGeometry(0.5, 4.0, 16, 1, true);
   outerGeo.translate(0, 2.0, 0); outerGeo.rotateX(Math.PI / 2);
 
@@ -805,12 +844,14 @@ function createJetMesh() {
 
   root.userData.afterburners = [flameOuter, flameInner];
 
+  // Tail
   const tail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.1, 3), matBody);
   tail.position.set(0, 1.5, 5.1); tail.rotation.x = 0.55; tail.castShadow = true; root.add(tail);
 
   const hStab = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.12, 2.1), matBody);
   hStab.position.set(0, 0.25, 5.6); hStab.rotation.x = -0.1; hStab.castShadow = true; root.add(hStab);
 
+  // Gear
   const gearGroup = new THREE.Group();
   root.add(gearGroup);
   root.userData.gearGroup = gearGroup;
@@ -828,6 +869,7 @@ function createJetMesh() {
   const mainWheelR = new THREE.Mesh(tireGeo, tireMat);
   mainWheelR.position.set(-1.4, -1.2, 1); mainWheelR.castShadow = true; gearGroup.add(mainWheelR);
 
+  // Vapors
   const vaporMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0, depthWrite: false });
   const vaporGeo = new THREE.PlaneGeometry(2, 0.4);
 
@@ -840,10 +882,10 @@ function createJetMesh() {
   root.userData.vaporL = vaporL;
   root.userData.vaporR = vaporR;
 
-  const dust = new THREE.Mesh(
-    (()=>{ const g = new THREE.PlaneGeometry(6, 3); g.rotateX(-Math.PI/2); return g; })(),
-    new THREE.MeshBasicMaterial({ color: 0xaaaaaa, transparent: true, opacity: 0.0, depthWrite: false })
-  );
+  // Dust
+  const dustGeo = new THREE.PlaneGeometry(6, 3);
+  dustGeo.rotateX(-Math.PI/2);
+  const dust = new THREE.Mesh(dustGeo, new THREE.MeshBasicMaterial({ color: 0xaaaaaa, transparent: true, opacity: 0.0, depthWrite: false }));
   dust.position.set(0, -1.2, 1);
   root.add(dust);
   root.userData.dust = dust;
@@ -851,12 +893,13 @@ function createJetMesh() {
   return root;
 }
 
-// --- World / Terrain / Runway (mountains + trees on terrain + hill grid overlay) ---
+/* =========================
+   World (Terrain + Hill Grid + Runway + Trees)
+========================= */
 function createWorld() {
   const size = WORLD.size;
   const segments = WORLD.segments;
 
-  // Terrain mesh
   const groundGeo = new THREE.PlaneGeometry(size, size, segments, segments);
   const pos = groundGeo.attributes.position;
 
@@ -864,13 +907,14 @@ function createWorld() {
     const x = pos.getX(i);
     const zPlane = pos.getY(i); // becomes WORLD Z after rotate
 
-    let height = 0;
-    if (!isOnRunwayXZ(x, zPlane)) height = terrainHeightWorld(x, zPlane) - WORLD.groundY; // raw height before mesh offset
-    pos.setZ(i, height);
+    // raw height above base ground (mesh local Z)
+    const h = terrainHeightRaw(x, zPlane);
+    pos.setZ(i, h);
   }
   pos.needsUpdate = true;
   groundGeo.computeVertexNormals();
 
+  // Terrain
   const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({
     color: 0x365c3c, roughness: 0.95, metalness: 0.0
   }));
@@ -879,7 +923,7 @@ function createWorld() {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Hill grid overlay (wireframe)
+  // Hill grid overlay (wireframe) — THIS is your grid now (no GridHelper)
   const groundGrid = new THREE.Mesh(groundGeo.clone(), new THREE.MeshBasicMaterial({
     color: 0x111111,
     wireframe: true,
@@ -895,7 +939,7 @@ function createWorld() {
   groundGrid.renderOrder = 2;
   scene.add(groundGrid);
 
-  // Runway
+  // Runway (flat)
   const runway = new THREE.Mesh(new THREE.PlaneGeometry(60, 3500), new THREE.MeshStandardMaterial({
     color: 0x222428, roughness: 0.8, metalness: 0.1
   }));
@@ -933,26 +977,17 @@ function createWorld() {
     }
   }
 
-  // A lighter far grid (optional, cheaper than before)
-  const farGrid = new THREE.GridHelper(size, 200, 0x555555, 0x777777);
-  farGrid.position.y = WORLD.groundY + 0.05;
-  farGrid.material.opacity = 0.12;
-  farGrid.material.transparent = true;
-  scene.add(farGrid);
-
-  // --- Trees: Instanced (WAY faster) + placed on terrain height ---
-  const treeCount = 550; // fewer = faster; still looks full
+  // Trees: Instanced, placed ON TOP of the terrain height (won’t sink)
+  const treeCount = 550;
 
   const trunkGeo = new THREE.CylinderGeometry(0.5, 0.7, 6, 6);
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x4a3018 });
-
   const leafGeo = new THREE.ConeGeometry(5, 16, 10);
   const leafMat = new THREE.MeshLambertMaterial({ vertexColors: true });
 
   const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
   const leafInst  = new THREE.InstancedMesh(leafGeo, leafMat, treeCount);
 
-  // No shadows on trees = big perf win
   trunkInst.castShadow = false; trunkInst.receiveShadow = false;
   leafInst.castShadow = false;  leafInst.receiveShadow = false;
 
@@ -964,31 +999,31 @@ function createWorld() {
 
   let placed = 0;
   let attempts = 0;
-  while (placed < treeCount && attempts < treeCount * 8) {
+
+  while (placed < treeCount && attempts < treeCount * 10) {
     attempts++;
 
     const x = (Math.random() - 0.5) * 7000;
     const z = (Math.random() - 0.5) * 7000;
 
     // keep runway clear
-    if (Math.abs(x) < 90 && Math.abs(z) < 2000) continue;
+    if (Math.abs(x) < RUNWAY.halfW + 30 && Math.abs(z) < RUNWAY.halfL + 200) continue;
 
     const groundY = getGroundHeight(x, z);
-    if (isOnRunwayXZ(x, z)) continue;
 
     const s = 0.6 + Math.random() * 1.1;
     const yaw = Math.random() * Math.PI * 2;
 
-    // trunk: center at groundY + 3
     rotY.set(0, yaw, 0);
     tmpQuat.setFromEuler(rotY);
-
-    tmpPos.set(x, groundY + 3.0 * s, z);
     tmpScale.set(s, s, s);
+
+    // trunk center at ground + 3*s
+    tmpPos.set(x, groundY + 3.0 * s, z);
     tmpMat.compose(tmpPos, tmpQuat, tmpScale);
     trunkInst.setMatrixAt(placed, tmpMat);
 
-    // leaves: center at (groundY + 14) scaled
+    // leaves center at ground + 14*s
     tmpPos.set(x, groundY + 14.0 * s, z);
     tmpMat.compose(tmpPos, tmpQuat, tmpScale);
     leafInst.setMatrixAt(placed, tmpMat);
@@ -1007,7 +1042,9 @@ function createWorld() {
   scene.add(leafInst);
 }
 
-// --- Utils ---
+/* =========================
+   Utils + Loop
+========================= */
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
