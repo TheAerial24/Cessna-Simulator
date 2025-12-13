@@ -14,7 +14,7 @@
       padding: 15px; border-radius: 8px;
       pointer-events: none; user-select: none;
       border: 2px solid #0f0; box-shadow: 0 0 10px #0f0;
-      z-index: 10; min-width: 150px;
+      z-index: 10; min-width: 170px;
     }
     .hud-row { margin-bottom: 5px; font-weight: bold; display: flex; justify-content: space-between; }
     .hud-label { margin-right: 10px; }
@@ -36,10 +36,11 @@
       transform: translate(-50%, -50%);
       color: white; font-family: sans-serif; font-weight: bold;
       background: rgba(0,0,0,0.8);
-      padding: 30px; border-radius: 10px; text-align: center;
+      padding: 26px; border-radius: 10px; text-align: center;
       z-index: 20; cursor: pointer; border: 2px solid white;
+      max-width: min(560px, calc(100vw - 40px));
     }
-    #overlay-msg { display: none; font-size: 24px; cursor: pointer; }
+    #overlay-msg { display: none; font-size: 22px; cursor: pointer; }
     #start-screen { display: flex; flex-direction: column; align-items: center; gap: 10px; }
     #loading { display: none; cursor: default; }
 
@@ -47,7 +48,7 @@
     p { margin: 5px 0; color: #ddd; }
     .key { background: #333; padding: 2px 6px; border-radius: 4px; border: 1px solid #666; font-family: monospace; }
     .btn-start {
-      margin-top: 20px;
+      margin-top: 16px;
       padding: 10px 30px;
       font-size: 20px;
       background: #2196F3;
@@ -94,10 +95,11 @@
       font-weight: bold;
       cursor: pointer;
     }
+    small { font-weight: 600; opacity: 0.85; word-break: break-all; }
   </style>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
-  <!-- GLTF/DRACO loaders (non-module versions) -->
+  <!-- Non-module GLTF loader scripts -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/DRACOLoader.js"></script>
 </head>
@@ -155,7 +157,7 @@
    Globals
 ========================= */
 let scene, camera, renderer, clock;
-let plane;              // the object we move with physics
+let plane;
 let gameActive = false;
 
 let PHYSICS = {};
@@ -168,48 +170,29 @@ let keys = {};
 /* =========================
    Model settings
 ========================= */
-// Put your GLB file next to index.html:
-const MODEL_URL = "./f_16_c.glb";
+const MODEL_URL = "./f_16_c.glb";      // MUST be next to index.html
+const MODEL_FIX_ROT_Y = Math.PI;       // flip for -Z forward
+const MODEL_SCALE = 1.0;               // change if too big/small
 
-// Most glTFs are +Z forward, but this sim uses -Z forward.
-// Rotating Y by PI usually makes it fly the right way:
-const MODEL_FIX_ROT_Y = Math.PI;
-
-// If your jet looks too big/small, change this:
-const MODEL_SCALE = 1.0;
-
-/* Model-derived clearances (computed after load) */
 const MODEL_DIM = {
   ready: false,
-  size: new THREE.Vector3(12, 5, 15), // fallback
-  bellyHeight: 0.55,                 // when gear is up
-  gearHeightFull: 1.35               // when gear is down
+  size: new THREE.Vector3(12, 5, 15),
+  bellyHeight: 0.55,
+  gearHeightFull: 1.35
 };
 
 function getClearanceMeters() {
-  const gearEffect = sim.gearPos; // 0..1
+  const gearEffect = sim.gearPos;
   return THREE.MathUtils.lerp(MODEL_DIM.bellyHeight, MODEL_DIM.gearHeightFull, gearEffect);
 }
 
 /* =========================
    World & Terrain
 ========================= */
-const WORLD = {
-  size: 40000,
-  segments: 140,
-  runwayY: 0.2,
-  groundY: -0.05
-};
-
+const WORLD = { size: 40000, segments: 140, runwayY: 0.2, groundY: -0.05 };
 const RUNWAY = { halfW: 80, halfL: 2100 };
 
-const SPAWN = {
-  x: 0,
-  z: 1200,
-  flatRadius: 850, // ~0.53 miles
-  fade: 650
-};
-
+const SPAWN = { x: 0, z: 1200, flatRadius: 850, fade: 650 };
 const VALLEY = {
   halfW: RUNWAY.halfW + 900,
   halfL: RUNWAY.halfL + 900,
@@ -218,13 +201,7 @@ const VALLEY = {
   floorDrop: 3.0
 };
 
-const TERRAIN = {
-  ready: false,
-  size: WORLD.size,
-  seg: WORLD.segments,
-  geo: null,
-  meshY: WORLD.groundY
-};
+const TERRAIN = { ready: false, size: WORLD.size, seg: WORLD.segments, geo: null, meshY: WORLD.groundY };
 
 function clamp01(v){ return v < 0 ? 0 : (v > 1 ? 1 : v); }
 
@@ -272,10 +249,9 @@ function sampleTerrainMeshHeightAndNormal(x, z) {
 }
 
 /* =========================
-   Deterministic hill features
+   Hills
 ========================= */
 const HILLS = [];
-
 function mulberry32(seed) {
   return function() {
     let t = seed += 0x6D2B79F5;
@@ -284,12 +260,10 @@ function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-
 function smoothstep(edge0, edge1, x) {
   const t = THREE.MathUtils.clamp((x - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
 }
-
 function rectBlend(ax, az, halfW, halfL, fadeW, fadeL) {
   const dx = Math.max(0, ax - halfW);
   const dz = Math.max(0, az - halfL);
@@ -297,16 +271,11 @@ function rectBlend(ax, az, halfW, halfL, fadeW, fadeL) {
   const fz = smoothstep(0, fadeL, dz);
   return Math.max(fx, fz);
 }
-
 function circleBlend(x, z, cx, cz, radius, fade) {
   const d = Math.max(0, Math.hypot(x - cx, z - cz) - radius);
   return smoothstep(0, fade, d);
 }
-
-function isOnRunwayXZ(x, z) {
-  return (Math.abs(x) < RUNWAY.halfW && Math.abs(z) < RUNWAY.halfL);
-}
-
+function isOnRunwayXZ(x, z) { return (Math.abs(x) < RUNWAY.halfW && Math.abs(z) < RUNWAY.halfL); }
 function valleyBlend(x, z) {
   const ax = Math.abs(x);
   const az = Math.abs(z);
@@ -314,7 +283,6 @@ function valleyBlend(x, z) {
   const bCirc = circleBlend(x, z, SPAWN.x, SPAWN.z, SPAWN.flatRadius, SPAWN.fade);
   return Math.min(bRect, bCirc);
 }
-
 function initHillFeatures() {
   HILLS.length = 0;
   const rand = mulberry32(1337);
@@ -322,43 +290,34 @@ function initHillFeatures() {
 
   for (let i = 0; i < count; i++) {
     let x = 0, z = 0, tries = 0;
-
     while (tries++ < 60) {
       x = (rand() - 0.5) * 15000;
       z = (rand() - 0.5) * 15000;
-
       if (Math.abs(x) < (VALLEY.halfW + VALLEY.fadeW) && Math.abs(z) < (VALLEY.halfL + VALLEY.fadeL)) continue;
       if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < (SPAWN.flatRadius + SPAWN.fade)) continue;
       break;
     }
-
     const radius = 260 + rand() * 1050;
     const height = 55 + Math.pow(rand(), 0.35) * 185;
     HILLS.push({ x, z, radius, height });
   }
 }
-
 function baseTerrainRaw(x, z) {
   const size = WORLD.size;
   const nx = x / size;
   const nz = z / size;
-
   const low  = Math.sin(nx * Math.PI * 4.0) * Math.cos(nz * Math.PI * 3.0) * 40;
   const mid  = Math.sin(nx * 2.3) * Math.sin(nz * 2.8) * 22;
   const hi   = Math.sin(nx * 10.0) * Math.cos(nz * 9.0) * 7;
-
   const ridge = 1.0 - Math.abs(Math.sin(nx * Math.PI * 3.6) * Math.cos(nz * Math.PI * 3.1));
   const ridgeShaped = Math.pow(ridge, 2.2) * 55;
-
   return (low + mid + hi) + ridgeShaped;
 }
-
 function featureHillsRaw(x, z) {
   let h = 0;
   for (let i = 0; i < HILLS.length; i++) {
     const f = HILLS[i];
-    const dx = x - f.x;
-    const dz = z - f.z;
+    const dx = x - f.x, dz = z - f.z;
     const d2 = dx*dx + dz*dz;
     const r2 = f.radius * f.radius;
     const w = Math.exp(-d2 / (2 * r2));
@@ -366,19 +325,16 @@ function featureHillsRaw(x, z) {
   }
   return h;
 }
-
 function terrainWorldHeightOffRunway_Analytic(x, z) {
   const raw = WORLD.groundY + baseTerrainRaw(x, z) + featureHillsRaw(x, z);
   const valleyFloor = WORLD.runwayY - VALLEY.floorDrop;
   const b = valleyBlend(x, z);
   return THREE.MathUtils.lerp(valleyFloor, raw, b);
 }
-
 function getTerrainMeshWorldHeight_Analytic(x, z) {
   if (isOnRunwayXZ(x, z)) return WORLD.runwayY - VALLEY.floorDrop;
   return terrainWorldHeightOffRunway_Analytic(x, z);
 }
-
 function getGroundHeight(x, z) {
   if (isOnRunwayXZ(x, z)) return WORLD.runwayY;
   if (TERRAIN.ready) return sampleTerrainMeshHeightAndNormal(x, z).h;
@@ -388,9 +344,7 @@ function getGroundHeight(x, z) {
 /* =========================
    Gear Animation
 ========================= */
-function easeInOutCubic(t) {
-  return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
-}
+function easeInOutCubic(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2; }
 function moveTowards(current, target, maxDelta) {
   if (Math.abs(target - current) <= maxDelta) return target;
   return current + Math.sign(target - current) * maxDelta;
@@ -402,8 +356,6 @@ function updateGearAnimation(dt) {
   sim.gearPos = moveTowards(sim.gearPos, sim.gearTarget, maxStep);
 
   const t = easeInOutCubic(sim.gearPos);
-
-  // If HUD reads UP, hide gear meshes.
   const gearVisible = sim.gearPos >= 0.05;
 
   for (const part of plane.userData.gear.parts) {
@@ -551,11 +503,9 @@ function init() {
 
   createWorld();
 
-  // Create a container plane (we'll load the GLB into it)
   plane = createAircraftContainer();
   scene.add(plane);
 
-  // Load the GLB into the plane
   loadAircraftModel(MODEL_URL);
 
   window.addEventListener('resize', onResize);
@@ -565,9 +515,7 @@ function init() {
   });
   document.addEventListener('keyup', e => keys[e.code] = false);
 
-  // Ensure gear is initialized visually
   updateGearAnimation(0);
-
   animate();
 }
 
@@ -577,29 +525,26 @@ function toggleGear() {
 }
 
 /* =========================
-   Aircraft container + GLB loading
+   Aircraft container + GLB loading (DEBUGGED)
 ========================= */
 function createAircraftContainer() {
   const root = new THREE.Group();
 
-  // Model holder (we rotate/scale the model inside here so physics axes stay consistent)
   const modelGroup = new THREE.Group();
   modelGroup.rotation.y = MODEL_FIX_ROT_Y;
   modelGroup.scale.setScalar(MODEL_SCALE);
   root.add(modelGroup);
   root.userData.modelGroup = modelGroup;
 
-  // Placeholder so you see *something* before GLB loads
   const placeholder = new THREE.Mesh(
     new THREE.BoxGeometry(2, 0.6, 6),
     new THREE.MeshStandardMaterial({ color: 0xb0b7c0, metalness: 0.6, roughness: 0.35 })
   );
   placeholder.castShadow = true;
-  placeholder.receiveShadow = false;
   modelGroup.add(placeholder);
   root.userData.placeholder = placeholder;
 
-  // Fallback gear (works even if your GLB has no animated gear parts)
+  // fallback gear
   const gearGroup = new THREE.Group();
   root.add(gearGroup);
 
@@ -611,7 +556,6 @@ function createAircraftContainer() {
   const mainWheelL = new THREE.Mesh(tireGeo, tireMat); mainWheelL.castShadow = true; gearGroup.add(mainWheelL);
   const mainWheelR = new THREE.Mesh(tireGeo, tireMat); mainWheelR.castShadow = true; gearGroup.add(mainWheelR);
 
-  // default positions (will be recalculated after model loads)
   const noseDownPos  = new THREE.Vector3(0, -1.2, -5);
   const mainLDownPos = new THREE.Vector3( 1.4, -1.2, 1);
   const mainRDownPos = new THREE.Vector3(-1.4, -1.2, 1);
@@ -620,56 +564,40 @@ function createAircraftContainer() {
   const mainLUpPos = new THREE.Vector3( 0.95, -0.15, 2.15);
   const mainRUpPos = new THREE.Vector3(-0.95, -0.15, 2.15);
 
-  const downRot   = new THREE.Euler(0, 0, 0);
-  const noseUpRot = new THREE.Euler(Math.PI/2, 0, 0);
-  const mainUpRot = new THREE.Euler(Math.PI/2, 0, 0);
+  const downRot = new THREE.Euler(0,0,0);
+  const upRot   = new THREE.Euler(Math.PI/2, 0, 0);
 
   root.userData.gear = {
     parts: [
-      { mesh: noseWheel,  downPos: noseDownPos,  upPos: noseUpPos,  downRot: downRot, upRot: noseUpRot },
-      { mesh: mainWheelL, downPos: mainLDownPos, upPos: mainLUpPos, downRot: downRot, upRot: mainUpRot },
-      { mesh: mainWheelR, downPos: mainRDownPos, upPos: mainRUpPos, downRot: downRot, upRot: mainUpRot }
+      { mesh: noseWheel,  downPos: noseDownPos,  upPos: noseUpPos,  downRot: downRot, upRot: upRot },
+      { mesh: mainWheelL, downPos: mainLDownPos, upPos: mainLUpPos, downRot: downRot, upRot: upRot },
+      { mesh: mainWheelR, downPos: mainRDownPos, upPos: mainRUpPos, downRot: downRot, upRot: upRot }
     ]
   };
 
-  // init DOWN
-  noseWheel.position.copy(noseDownPos);
-  mainWheelL.position.copy(mainLDownPos);
-  mainWheelR.position.copy(mainRDownPos);
-
-  // Afterburner flames (we'll reposition after model loads)
+  // Afterburners
   const outerGeo = new THREE.ConeGeometry(0.5, 4.0, 16, 1, true);
   outerGeo.translate(0, 2.0, 0); outerGeo.rotateX(Math.PI/2);
-
   const flameOuter = new THREE.Mesh(outerGeo, new THREE.MeshBasicMaterial({
     color: 0xffaa33, transparent: true, opacity: 0.55,
     blending: THREE.AdditiveBlending, depthWrite: false
   }));
-  flameOuter.visible = false;
-  root.add(flameOuter);
+  flameOuter.visible = false; root.add(flameOuter);
 
   const innerGeo = new THREE.ConeGeometry(0.3, 3.0, 16, 1, true);
   innerGeo.translate(0, 1.5, 0); innerGeo.rotateX(Math.PI/2);
-
   const flameInner = new THREE.Mesh(innerGeo, new THREE.MeshBasicMaterial({
     color: 0x66c9ff, transparent: true, opacity: 0.8,
     blending: THREE.AdditiveBlending, depthWrite: false
   }));
-  flameInner.visible = false;
-  root.add(flameInner);
-
+  flameInner.visible = false; root.add(flameInner);
   root.userData.afterburners = [flameOuter, flameInner];
 
-  // Wingtip vapor (reposition later)
+  // Vapor
   const vaporMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0, depthWrite: false });
   const vaporGeo = new THREE.PlaneGeometry(2, 0.4);
-
-  const vaporL = new THREE.Mesh(vaporGeo, vaporMat);
-  vaporL.rotation.y = Math.PI/2; root.add(vaporL);
-
-  const vaporR = new THREE.Mesh(vaporGeo, vaporMat.clone());
-  vaporR.rotation.y = -Math.PI/2; root.add(vaporR);
-
+  const vaporL = new THREE.Mesh(vaporGeo, vaporMat); vaporL.rotation.y = Math.PI/2; root.add(vaporL);
+  const vaporR = new THREE.Mesh(vaporGeo, vaporMat.clone()); vaporR.rotation.y = -Math.PI/2; root.add(vaporR);
   root.userData.vaporL = vaporL;
   root.userData.vaporR = vaporR;
 
@@ -687,9 +615,26 @@ function loadAircraftModel(url) {
   const loadingEl = document.getElementById('loading');
   loadingEl.style.display = 'block';
 
+  const abs = new URL(url, window.location.href).href;
+  loadingEl.innerHTML = `LOADING MODEL…<br><small>${abs}</small>`;
+  console.log("Model URL:", abs);
+
+  // If the loader scripts didn't load, you’ll hang forever without this.
+  if (!THREE.GLTFLoader) {
+    loadingEl.innerHTML = `GLTFLoader FAILED TO LOAD<br><small>Loader CDN blocked or script tags failed.</small>`;
+    console.error("THREE.GLTFLoader missing: GLTFLoader.js did not load.");
+    return;
+  }
+
+  // If you're on GitHub Pages and used Git LFS, it often serves a text pointer file.
+  // This "slow-hang" check nudges you where to look.
+  const hangTimer = setTimeout(() => {
+    loadingEl.innerHTML =
+      `STILL LOADING…<br><small>If this never finishes: open DevTools → Network → find f_16_c.glb<br>Common issues: 404 (wrong name/path), CORS/file:// (not served), or Git LFS pointer file.</small>`;
+  }, 6000);
+
   const loader = new THREE.GLTFLoader();
 
-  // Optional DRACO support (only used if your GLB is Draco-compressed)
   const dracoLoader = new THREE.DRACOLoader();
   dracoLoader.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/");
   loader.setDRACOLoader(dracoLoader);
@@ -697,9 +642,9 @@ function loadAircraftModel(url) {
   loader.load(
     url,
     (gltf) => {
+      clearTimeout(hangTimer);
       loadingEl.style.display = 'none';
 
-      // Remove placeholder
       if (plane.userData.placeholder) {
         plane.userData.modelGroup.remove(plane.userData.placeholder);
         plane.userData.placeholder.geometry.dispose();
@@ -709,7 +654,6 @@ function loadAircraftModel(url) {
 
       const model = gltf.scene;
 
-      // Enable shadows
       model.traverse((o) => {
         if (o.isMesh) {
           o.castShadow = true;
@@ -718,17 +662,15 @@ function loadAircraftModel(url) {
         }
       });
 
-      // Center the model around (0,0,0) so physics + gear anchoring behaves
+      // Center the model so anchors (gear/vapor/afterburner) behave
       const bbox = new THREE.Box3().setFromObject(model);
       const center = new THREE.Vector3();
       bbox.getCenter(center);
       model.position.sub(center);
 
-      // Add to modelGroup (which already has rotation/scale fix)
       plane.userData.modelGroup.add(model);
 
-      // Recompute bbox in *plane local* after centering/scale/rotation
-      // We temporarily force matrices to update:
+      // recompute bbox after scale/rotation
       plane.updateMatrixWorld(true);
       const bbox2 = new THREE.Box3().setFromObject(plane.userData.modelGroup);
       const size = new THREE.Vector3();
@@ -736,29 +678,35 @@ function loadAircraftModel(url) {
 
       MODEL_DIM.ready = true;
       MODEL_DIM.size.copy(size);
+      MODEL_DIM.bellyHeight    = Math.max(0.35, size.y * 0.10);
+      MODEL_DIM.gearHeightFull = Math.max(1.10, size.y * 0.20);
 
-      // Derive reasonable clearances from model size
-      // (tweak these if your model's origin/scale is odd)
-      MODEL_DIM.bellyHeight   = Math.max(0.35, size.y * 0.10);
-      MODEL_DIM.gearHeightFull= Math.max(1.10, size.y * 0.20);
-
-      // Reposition effects + fallback gear based on model size
       rebuildAircraftAnchors();
-
-      // Force gear visuals to match current state
       updateGearAnimation(0);
+      resetPlane(); // snap spawn clearance to model size
+      console.log("Model loaded. Size:", size);
     },
     (xhr) => {
       if (xhr.total) {
         const pct = Math.round((xhr.loaded / xhr.total) * 100);
-        loadingEl.textContent = `LOADING MODEL… ${pct}%`;
+        loadingEl.innerHTML = `LOADING MODEL… ${pct}%<br><small>${abs}</small>`;
+      } else {
+        loadingEl.innerHTML = `LOADING MODEL…<br><small>${abs}</small>`;
       }
     },
     (err) => {
-      loadingEl.style.display = 'none';
+      clearTimeout(hangTimer);
       console.error("GLB load failed:", err);
-      document.getElementById('overlay-msg').innerHTML = "MODEL LOAD FAILED<br>Check path & server";
-      document.getElementById('overlay-msg').style.display = 'block';
+
+      // Show something actionable right on screen
+      const msg =
+        `MODEL LOAD FAILED<br><small>
+         Open DevTools → Console + Network.<br>
+         If Network shows 404: filename/path mismatch.<br>
+         If CORS / Failed to fetch: you opened file:// or server blocked it.<br>
+         If Content-Type is text/html: it's loading a page instead of the .glb.</small>`;
+
+      loadingEl.innerHTML = msg;
     }
   );
 }
@@ -767,11 +715,8 @@ function rebuildAircraftAnchors() {
   if (!plane || !plane.userData.gear || !MODEL_DIM.ready) return;
 
   const size = MODEL_DIM.size;
-  const L = size.z;
-  const W = size.x;
-  const H = size.y;
+  const L = size.z, W = size.x, H = size.y;
 
-  // Fallback gear anchor positions (relative to plane origin)
   const gearY = -H * 0.45;
 
   const noseDownPos  = new THREE.Vector3(0, gearY, -L * 0.38);
@@ -782,23 +727,20 @@ function rebuildAircraftAnchors() {
   const mainLUpPos = new THREE.Vector3( W * 0.14, -H * 0.14,  L * 0.18);
   const mainRUpPos = new THREE.Vector3(-W * 0.14, -H * 0.14,  L * 0.18);
 
-  const downRot   = new THREE.Euler(0, 0, 0);
-  const upRot     = new THREE.Euler(Math.PI/2, 0, 0);
+  const downRot = new THREE.Euler(0,0,0);
+  const upRot   = new THREE.Euler(Math.PI/2, 0, 0);
 
-  // Update gear parts data
   const parts = plane.userData.gear.parts;
   parts[0].downPos.copy(noseDownPos);  parts[0].upPos.copy(noseUpPos);  parts[0].downRot.copy(downRot); parts[0].upRot.copy(upRot);
   parts[1].downPos.copy(mainLDownPos); parts[1].upPos.copy(mainLUpPos); parts[1].downRot.copy(downRot); parts[1].upRot.copy(upRot);
   parts[2].downPos.copy(mainRDownPos); parts[2].upPos.copy(mainRUpPos); parts[2].downRot.copy(downRot); parts[2].upRot.copy(upRot);
 
-  // Afterburners near the tail (+Z)
   if (plane.userData.afterburners) {
     const tailZ = (L * 0.52);
     plane.userData.afterburners[0].position.set(0, 0, tailZ);
     plane.userData.afterburners[1].position.set(0, 0, tailZ + 0.12);
   }
 
-  // Vapor near wingtips
   if (plane.userData.vaporL && plane.userData.vaporR) {
     plane.userData.vaporL.position.set( W * 0.52, 0, 0);
     plane.userData.vaporR.position.set(-W * 0.52, 0, 0);
@@ -806,7 +748,6 @@ function rebuildAircraftAnchors() {
     plane.userData.vaporR.scale.setScalar(Math.max(0.8, W * 0.12));
   }
 
-  // Dust under main gear
   if (plane.userData.dust) {
     plane.userData.dust.position.set(0, gearY + 0.02, L * 0.08);
     plane.userData.dust.scale.set(Math.max(1.0, W * 0.18), 1, Math.max(1.0, L * 0.06));
@@ -911,12 +852,12 @@ function updatePhysics(dt) {
     .add(thrustForce)
     .add(gravityForce);
 
-  // Ground contact using animated gear effectiveness
+  // Ground contact
   const groundH = getGroundHeight(sim.pos.x, sim.pos.z);
   const wasOnGround = sim.onGround;
   let suspensionTorque = 0;
 
-  const gearEffect = sim.gearPos; // 0..1
+  const gearEffect = sim.gearPos;
   const clearance = getClearanceMeters();
 
   if (gearEffect > 0.2) {
@@ -963,7 +904,6 @@ function updatePhysics(dt) {
       }
     }
   } else {
-    // gear up -> belly crash
     sim.onGround = false;
     const bellyClear = MODEL_DIM.bellyHeight;
     if (sim.pos.y < groundH + bellyClear) {
@@ -1094,7 +1034,6 @@ function updateHUD() {
   document.getElementById('aoa-display').innerText = aoaDeg;
   document.getElementById('g-display').innerText = gLoad.toFixed(1);
 
-  // Gear display (UP / MOV / DWN)
   let gearText = "MOV";
   let gearColor = "#fa0";
   if (sim.gearPos > 0.95) { gearText = "DWN"; gearColor = "#0f0"; }
@@ -1209,7 +1148,7 @@ function createWorld() {
   runway.castShadow = true;
   scene.add(runway);
 
-  // Markings
+  // markings
   const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
   for (let z = -1600; z <= 1600; z += 200) {
     const mark = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 40), lineMat);
@@ -1226,7 +1165,7 @@ function createWorld() {
   rightEdge.position.x = 29.5;
   scene.add(rightEdge);
 
-  // Trees (instanced)
+  // trees
   const treeCount = 520;
 
   const trunkGeo = new THREE.CylinderGeometry(0.5, 0.7, 6, 6);
@@ -1255,6 +1194,7 @@ function createWorld() {
     if (isOnRunwayXZ(x, z)) continue;
 
     const s = 0.6 + Math.random() * 1.1;
+
     const sample = sampleTerrainMeshHeightAndNormal(x, z);
     const groundY = sample.h;
     const n = sample.n;
@@ -1289,14 +1229,13 @@ function createWorld() {
 }
 
 /* =========================
-   Utils + Loop
+   Loop
 ========================= */
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
-
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
