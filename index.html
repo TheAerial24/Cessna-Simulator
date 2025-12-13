@@ -427,7 +427,14 @@ function init() {
     stalled: false,
     onGround: true,
 
+    // Landing gear animation state:
+    // 1 = fully down, 0 = fully up
+    gearPos: 1.0,
+    gearTarget: 1.0,
+
+    // (kept for compatibility, but derived from gearPos)
     gearDown: true,
+
     afterburner: false,
     airBrake: false,
 
@@ -522,10 +529,8 @@ function init() {
 }
 
 function toggleGear() {
-  sim.gearDown = !sim.gearDown;
-  if (plane && plane.userData.gearGroup) {
-    plane.userData.gearGroup.visible = sim.gearDown;
-  }
+  // Animate toward a target instead of hiding the gear
+  sim.gearTarget = (sim.gearTarget > 0.5) ? 0.0 : 1.0;
 }
 
 /* =========================
@@ -558,6 +563,38 @@ function updateInputs() {
   input.pitch = THREE.MathUtils.clamp(keyPitchCmd, -1, 1);
   input.roll  = THREE.MathUtils.clamp(keyRollCmd, -1, 1);
   input.yaw   = THREE.MathUtils.clamp(kYaw, -1, 1);
+}
+
+/* =========================
+   Gear animation (NEW)
+========================= */
+function updateGearAnimation(dt) {
+  if (!plane) return;
+
+  // Smooth approach to target
+  const speed = 6.0; // higher = faster animation
+  sim.gearPos += (sim.gearTarget - sim.gearPos) * (1 - Math.exp(-speed * dt));
+
+  // ease
+  const t = THREE.MathUtils.clamp(sim.gearPos, 0, 1);
+  const e = t * t * (3 - 2 * t); // smoothstep
+
+  // Animate pivots (defined in createJetMesh)
+  if (plane.userData.nosePivot) {
+    plane.userData.nosePivot.rotation.x = THREE.MathUtils.lerp(-1.45, 0.0, e);
+    plane.userData.nosePivot.position.y = THREE.MathUtils.lerp(-0.3, -0.9, e);
+  }
+  if (plane.userData.mainLPivot) {
+    plane.userData.mainLPivot.rotation.z = THREE.MathUtils.lerp(1.35, 0.0, e);
+    plane.userData.mainLPivot.position.y = THREE.MathUtils.lerp(-0.25, -0.9, e);
+  }
+  if (plane.userData.mainRPivot) {
+    plane.userData.mainRPivot.rotation.z = THREE.MathUtils.lerp(-1.35, 0.0, e);
+    plane.userData.mainRPivot.position.y = THREE.MathUtils.lerp(-0.25, -0.9, e);
+  }
+
+  // Keep sim.gearDown compatible with the rest of your physics
+  sim.gearDown = (sim.gearPos > 0.85);
 }
 
 /* =========================
@@ -653,9 +690,12 @@ function updatePhysics(dt) {
 
   let suspensionTorque = 0;
 
+  // Use animated gearPos to blend contact height
+  const gearBlend = THREE.MathUtils.clamp(sim.gearPos, 0, 1);
+  const contactOffsetBlend = bellyHeight + gearBlend * (gearHeight - bellyHeight);
+
   if (!onRunway) {
-    const contactOffset = sim.gearDown ? gearHeight : bellyHeight;
-    if (sim.pos.y <= groundH + contactOffset) {
+    if (sim.pos.y <= groundH + contactOffsetBlend) {
       sim.crashed = true;
       document.getElementById('overlay-msg').innerHTML = "CRASH<br>Click to Reset";
       document.getElementById('overlay-msg').style.display = 'block';
@@ -663,7 +703,10 @@ function updatePhysics(dt) {
     }
     sim.onGround = false;
   } else {
-    if (sim.gearDown) {
+    // Treat "wheel mode" only if gear mostly down
+    const wheelMode = (sim.gearPos > 0.6);
+
+    if (wheelMode) {
       const contactY = groundH + gearHeight;
       sim.onGround = (sim.pos.y <= contactY);
 
@@ -710,6 +753,7 @@ function updatePhysics(dt) {
         }
       }
     } else {
+      // Belly mode while gear is up or transitioning
       sim.onGround = false;
       const bellyContactY = groundH + bellyHeight;
       if (sim.pos.y < bellyContactY) {
@@ -849,8 +893,18 @@ function updateHUD() {
   document.getElementById('aoa-display').innerText = aoaDeg;
   document.getElementById('g-display').innerText = gLoad.toFixed(1);
 
-  document.getElementById('gear-display').innerText = sim.gearDown ? "DWN" : "UP";
-  document.getElementById('gear-display').style.color = sim.gearDown ? "#0f0" : "#fa0";
+  // Gear HUD: show DWN / UP / TRN
+  const gearEl = document.getElementById('gear-display');
+  if (sim.gearPos >= 0.95) {
+    gearEl.innerText = "DWN";
+    gearEl.style.color = "#0f0";
+  } else if (sim.gearPos <= 0.05) {
+    gearEl.innerText = "UP";
+    gearEl.style.color = "#fa0";
+  } else {
+    gearEl.innerText = "TRN";
+    gearEl.style.color = "#ff0";
+  }
 
   document.getElementById('stall-warning').style.display = sim.stalled ? 'block' : 'none';
   document.getElementById('brake-warning').style.display = (sim.airBrake && sim.onGround) ? 'block' : 'none';
@@ -895,7 +949,11 @@ function resetPlane() {
   sim.stalled = false;
   sim.onGround = true;
 
+  // Reset gear animation
+  sim.gearPos = 1.0;
+  sim.gearTarget = 1.0;
   sim.gearDown = true;
+
   sim.afterburner = false;
   sim.airBrake = false;
   sim.alpha = 0;
@@ -907,10 +965,12 @@ function resetPlane() {
   input.yaw = 0;
 
   if (plane) {
-    if (plane.userData.gearGroup) plane.userData.gearGroup.visible = true;
     if (plane.userData.airBrakeL) plane.userData.airBrakeL.rotation.y = 0;
     if (plane.userData.airBrakeR) plane.userData.airBrakeR.rotation.y = 0;
     if (plane.userData.dust) plane.userData.dust.material.opacity = 0;
+
+    // Force pivots to "down" pose immediately
+    updateGearAnimation(0.0001);
   }
 
   document.getElementById('throttle-fill').style.height = '0%';
@@ -1066,7 +1126,7 @@ function createJetMesh() {
   hStab.castShadow = true;
   root.add(hStab);
 
-  // Gear group
+  // Gear group (animated pivots)
   const gearGroup = new THREE.Group();
   root.add(gearGroup);
   root.userData.gearGroup = gearGroup;
@@ -1075,20 +1135,38 @@ function createJetMesh() {
   tireGeo.rotateZ(Math.PI/2);
   const tireMat = new THREE.MeshStandardMaterial({ color: VISUALS.colors.tire, roughness: 0.9, metalness: 0.0 });
 
+  // Nose gear pivot
+  const nosePivot = new THREE.Group();
+  gearGroup.add(nosePivot);
+  nosePivot.position.set(0, -0.9, -5.0);
+  root.userData.nosePivot = nosePivot;
+
   const noseWheel = new THREE.Mesh(tireGeo, tireMat);
-  noseWheel.position.set(0, -1.2, -5);
+  noseWheel.position.set(0, -0.3, 0);
   noseWheel.castShadow = true;
-  gearGroup.add(noseWheel);
+  nosePivot.add(noseWheel);
+
+  // Main left gear pivot
+  const mainLPivot = new THREE.Group();
+  gearGroup.add(mainLPivot);
+  mainLPivot.position.set(1.4, -0.9, 1.0);
+  root.userData.mainLPivot = mainLPivot;
 
   const mainWheelL = new THREE.Mesh(tireGeo, tireMat);
-  mainWheelL.position.set(1.4, -1.2, 1);
+  mainWheelL.position.set(0, -0.3, 0);
   mainWheelL.castShadow = true;
-  gearGroup.add(mainWheelL);
+  mainLPivot.add(mainWheelL);
+
+  // Main right gear pivot
+  const mainRPivot = new THREE.Group();
+  gearGroup.add(mainRPivot);
+  mainRPivot.position.set(-1.4, -0.9, 1.0);
+  root.userData.mainRPivot = mainRPivot;
 
   const mainWheelR = new THREE.Mesh(tireGeo, tireMat);
-  mainWheelR.position.set(-1.4, -1.2, 1);
+  mainWheelR.position.set(0, -0.3, 0);
   mainWheelR.castShadow = true;
-  gearGroup.add(mainWheelR);
+  mainRPivot.add(mainWheelR);
 
   // vapor
   const vaporMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0, depthWrite: false });
@@ -1264,6 +1342,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
   updatePhysics(dt);
+  updateGearAnimation(dt); // NEW
   updateHUD();
   updateCamera();
   renderer.render(scene, camera);
