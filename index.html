@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>3D Flight Demo (Built-in Jet)</title>
+  <title>3D Flight Demo (Built-in Jet + Tri Grid)</title>
   <style>
     body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Courier New', Courier, monospace; touch-action: none; }
     #canvas-container { width: 100vw; height: 100vh; display: block; }
@@ -95,10 +95,8 @@
       font-weight: bold;
       cursor: pointer;
     }
-    small { font-weight: 600; opacity: 0.85; word-break: break-all; }
   </style>
 
-  <!-- Three.js only (no GLTFLoader) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
 </head>
 
@@ -138,7 +136,6 @@
   <button class="btn-start">START FLIGHT</button>
 </div>
 
-<div id="loading">LOADING…</div>
 <div id="overlay-msg" onclick="resetPlane()">CRASH<br>Click to Reset</div>
 
 <div id="throttle-container" class="touch-control">
@@ -160,23 +157,18 @@ let gameActive = false;
 
 let PHYSICS = {};
 let sim = {};
-
 let input = { pitch: 0, roll: 0, yaw: 0, throttle: 0 };
 let keys = {};
 
 /* =========================
-   Model settings (built-in jet)
+   Built-in model dims (updated after build)
 ========================= */
-const MODEL_FIX_ROT_Y = 0.0;       // our built model already faces -Z
-const MODEL_SCALE = 1.0;
-
 const MODEL_DIM = {
   ready: false,
   size: new THREE.Vector3(10, 3, 12),
   bellyHeight: 0.45,
   gearHeightFull: 1.25
 };
-
 function getClearanceMeters() {
   const gearEffect = sim.gearPos;
   return THREE.MathUtils.lerp(MODEL_DIM.bellyHeight, MODEL_DIM.gearHeightFull, gearEffect);
@@ -338,6 +330,26 @@ function getGroundHeight(x, z) {
 }
 
 /* =========================
+   Triangular black grid (wireframe triangles)
+========================= */
+function addTriGrid() {
+  const geo = new THREE.PlaneGeometry(14000, 14000, 220, 220); // triangles
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x000000,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.22
+  });
+  mat.depthWrite = false;
+
+  const grid = new THREE.Mesh(geo, mat);
+  grid.rotation.x = -Math.PI / 2;
+  grid.position.y = WORLD.runwayY + 0.01;
+  grid.renderOrder = 2;
+  scene.add(grid);
+}
+
+/* =========================
    Gear Animation
 ========================= */
 function easeInOutCubic(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2; }
@@ -492,11 +504,12 @@ function init() {
   scene.add(sun);
 
   createWorld();
+  addTriGrid();
 
   plane = createAircraftContainer();
   scene.add(plane);
 
-  // Built-in jet model (no GLB)
+  // Build the nicer swept jet (no GLB)
   buildAndAttachJetModel();
 
   window.addEventListener('resize', onResize);
@@ -516,97 +529,207 @@ function toggleGear() {
 }
 
 /* =========================
-   Built-in “F-16-ish” model
+   Swept jet model (smooth nose, swept wing, single tailplane, nice canopy, smooth brakes)
 ========================= */
-function buildBasicF16LikeModel() {
+function roundedRectShape(w, h, r) {
+  const s = new THREE.Shape();
+  const x = -w / 2, y = -h / 2;
+  const rr = Math.min(r, w/2, h/2);
+
+  s.moveTo(x + rr, y);
+  s.lineTo(x + w - rr, y);
+  s.quadraticCurveTo(x + w, y, x + w, y + rr);
+  s.lineTo(x + w, y + h - rr);
+  s.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  s.lineTo(x + rr, y + h);
+  s.quadraticCurveTo(x, y + h, x, y + h - rr);
+  s.lineTo(x, y + rr);
+  s.quadraticCurveTo(x, y, x + rr, y);
+  return s;
+}
+
+function sweptWingHalfShape(span, rootChord, tipChord, sweep, round) {
+  const s = new THREE.Shape();
+  const x0 = 0;
+  const x1 = span;
+
+  const rootLE = -rootChord * 0.58;
+  const rootTE =  rootChord * 0.42;
+
+  const tipLE  = rootLE - sweep;
+  const tipTE  = tipLE + tipChord;
+
+  const r = Math.min(round, 0.22 * tipChord);
+
+  s.moveTo(x0, rootLE + r);
+  s.quadraticCurveTo(x0, rootLE, x0 + r, rootLE);
+
+  s.lineTo(x1 - r, tipLE);
+  s.quadraticCurveTo(x1, tipLE, x1, tipLE + r);
+
+  s.lineTo(x1, tipTE - r);
+  s.quadraticCurveTo(x1, tipTE, x1 - r, tipTE);
+
+  s.lineTo(x0 + r, rootTE);
+  s.quadraticCurveTo(x0, rootTE, x0, rootTE - r);
+
+  s.closePath();
+  return s;
+}
+
+function extrudeSurface(shape, thickness) {
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: thickness,
+    bevelEnabled: true,
+    bevelThickness: thickness * 0.55,
+    bevelSize: thickness * 0.65,
+    bevelSegments: 5,
+    curveSegments: 28,
+    steps: 1
+  });
+  geo.rotateX(-Math.PI / 2); // lay on XZ, thickness in Y
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function buildNiceSweptJet() {
   const g = new THREE.Group();
 
-  const matBody  = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 0.55, roughness: 0.35 });
-  const matDark  = new THREE.MeshStandardMaterial({ color: 0x20242a, metalness: 0.15, roughness: 0.85 });
-  const matGlass = new THREE.MeshStandardMaterial({ color: 0x66aaff, metalness: 0.0, roughness: 0.12, transparent: true, opacity: 0.45 });
+  const matBody  = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 0.60, roughness: 0.30 });
+  const matDark  = new THREE.MeshStandardMaterial({ color: 0x1e232a, metalness: 0.25, roughness: 0.80 });
+  const matEdge  = new THREE.MeshStandardMaterial({ color: 0x6b737c, metalness: 0.35, roughness: 0.45 });
+  const matGlass = new THREE.MeshStandardMaterial({ color: 0x74b7ff, metalness: 0.0, roughness: 0.08, transparent: true, opacity: 0.55 });
 
-  // Fuselage (length along Z). Our forward is -Z.
-  const fusGeo = new THREE.CylinderGeometry(0.55, 0.70, 9.0, 20, 1);
-  fusGeo.rotateX(Math.PI / 2);
+  // Smooth fuselage + smooth nose (Lathe)
+  const pts = [
+    new THREE.Vector2(0.00, -6.6),
+    new THREE.Vector2(0.18, -6.25),
+    new THREE.Vector2(0.42, -5.75),
+    new THREE.Vector2(0.62, -4.7),
+    new THREE.Vector2(0.74, -3.2),
+    new THREE.Vector2(0.80, -1.4),
+    new THREE.Vector2(0.82,  0.6),
+    new THREE.Vector2(0.78,  2.7),
+    new THREE.Vector2(0.72,  4.4),
+    new THREE.Vector2(0.64,  5.7),
+    new THREE.Vector2(0.58,  6.4)
+  ];
+  const fusGeo = new THREE.LatheGeometry(pts, 72);
+  fusGeo.rotateX(Math.PI / 2); // length along Z
   const fus = new THREE.Mesh(fusGeo, matBody);
   fus.castShadow = true;
   fus.receiveShadow = true;
   g.add(fus);
 
-  // Nose cone
-  const noseGeo = new THREE.ConeGeometry(0.55, 1.7, 20);
-  noseGeo.rotateX(Math.PI / 2);
-  const nose = new THREE.Mesh(noseGeo, matBody);
-  nose.position.z = -5.35;
-  nose.castShadow = true;
-  g.add(nose);
+  // Tail pipe
+  const pipeGeo = new THREE.CylinderGeometry(0.34, 0.42, 1.35, 30, 1, true);
+  pipeGeo.rotateX(Math.PI / 2);
+  const pipe = new THREE.Mesh(pipeGeo, matDark);
+  pipe.position.z = 6.45;
+  pipe.castShadow = true;
+  g.add(pipe);
 
-  // Canopy
-  const canopyGeo = new THREE.SphereGeometry(0.75, 18, 12, 0, Math.PI);
-  const canopy = new THREE.Mesh(canopyGeo, matGlass);
-  canopy.scale.set(1.2, 0.8, 1.8);
-  canopy.position.set(0, 0.55, -1.6);
-  canopy.castShadow = true;
-  g.add(canopy);
-
-  // Intake “chin”
-  const intakeGeo = new THREE.BoxGeometry(0.95, 0.55, 1.15);
+  // Intake (smoothed)
+  const intakeGeo = new THREE.CapsuleGeometry(0.35, 0.95, 10, 22);
+  intakeGeo.rotateX(Math.PI / 2);
   const intake = new THREE.Mesh(intakeGeo, matDark);
-  intake.position.set(0, -0.45, -2.3);
+  intake.scale.set(1.20, 0.55, 1.05);
+  intake.position.set(0, -0.58, -2.35);
   intake.castShadow = true;
   g.add(intake);
 
-  // Wings (swept)
-  const wingGeo = new THREE.BoxGeometry(6.1, 0.12, 2.1);
-  const wing = new THREE.Mesh(wingGeo, matBody);
-  wing.position.set(0, -0.12, 0.25);
-  wing.rotation.y = 0.16;
-  wing.castShadow = true;
-  g.add(wing);
+  // Cockpit canopy (nice)
+  const canopyGeo = new THREE.CapsuleGeometry(0.55, 1.30, 12, 26);
+  canopyGeo.rotateX(Math.PI / 2);
+  const canopy = new THREE.Mesh(canopyGeo, matGlass);
+  canopy.scale.set(1.25, 0.75, 2.05);
+  canopy.position.set(0, 0.62, -1.75);
+  canopy.castShadow = true;
+  g.add(canopy);
 
-  // Wing tip “missile rails”
-  const railGeo = new THREE.BoxGeometry(0.2, 0.12, 1.2);
-  const railL = new THREE.Mesh(railGeo, matDark);
-  const railR = railL.clone();
-  railL.position.set(3.1, -0.18, 0.15);
-  railR.position.set(-3.1, -0.18, 0.15);
-  railL.rotation.y = 0.16;
-  railR.rotation.y = 0.16;
-  g.add(railL, railR);
+  // Canopy frame
+  const frameGeo = new THREE.CapsuleGeometry(0.57, 1.26, 10, 22);
+  frameGeo.rotateX(Math.PI / 2);
+  const frame = new THREE.Mesh(frameGeo, matEdge);
+  frame.scale.set(1.26, 0.76, 2.06);
+  frame.position.copy(canopy.position);
+  frame.material.transparent = true;
+  frame.material.opacity = 0.30;
+  g.add(frame);
 
-  // Tail / engine section
-  const tailGeo = new THREE.CylinderGeometry(0.62, 0.55, 2.1, 20);
-  tailGeo.rotateX(Math.PI / 2);
-  const tail = new THREE.Mesh(tailGeo, matDark);
-  tail.position.z = 4.8;
-  tail.castShadow = true;
-  g.add(tail);
+  // Single swept wing (two mirrored halves = one wing)
+  const wingT = 0.12;
+  const halfWing = sweptWingHalfShape(3.9, 3.4, 1.6, 1.35, 0.24);
+  const wingHalfMesh = new THREE.Mesh(extrudeSurface(halfWing, wingT), matBody);
+  wingHalfMesh.position.set(0, -0.12, 0.15);
+  wingHalfMesh.castShadow = true;
 
-  // Vertical stabilizer
-  const finGeo = new THREE.BoxGeometry(0.18, 1.85, 1.75);
+  const wingR = wingHalfMesh;
+  const wingL = wingHalfMesh.clone();
+  wingL.scale.x = -1;
+  g.add(wingR, wingL);
+
+  // Wing fillet blend
+  const filletGeo = new THREE.CapsuleGeometry(0.42, 1.7, 10, 22);
+  filletGeo.rotateX(Math.PI / 2);
+  const fillet = new THREE.Mesh(filletGeo, matEdge);
+  fillet.scale.set(2.6, 0.18, 1.15);
+  fillet.position.set(0, -0.12, 0.02);
+  g.add(fillet);
+
+  // Vertical fin (smooth leading edge)
+  const finShape = new THREE.Shape();
+  finShape.moveTo(0, 0);
+  finShape.quadraticCurveTo(0.08, 0.55, 0.34, 1.75);
+  finShape.lineTo(1.00, 1.65);
+  finShape.lineTo(0.60, 0.10);
+  finShape.closePath();
+
+  const finGeo = extrudeSurface(finShape, 0.10);
   const fin = new THREE.Mesh(finGeo, matBody);
-  fin.position.set(0, 1.0, 3.9);
-  fin.rotation.x = -0.15;
+  fin.rotation.y = Math.PI / 2;
+  fin.position.set(0, 0.48, 3.9);
   fin.castShadow = true;
   g.add(fin);
 
-  // Horizontal stabilizers
-  const stabGeo = new THREE.BoxGeometry(2.3, 0.10, 1.05);
-  const stabL = new THREE.Mesh(stabGeo, matBody);
-  const stabR = stabL.clone();
-  stabL.position.set(1.25, 0.10, 3.55);
-  stabR.position.set(-1.25, 0.10, 3.55);
-  stabL.rotation.y = 0.20;
-  stabR.rotation.y = -0.20;
-  stabL.castShadow = true;
-  stabR.castShadow = true;
-  g.add(stabL, stabR);
+  // Single horizontal stabilizer over engine (one tailplane, leans past engine)
+  const stabT = 0.10;
+  const stabHalf = sweptWingHalfShape(1.75, 2.25, 1.25, 0.60, 0.22);
+  const stabHalfMesh = new THREE.Mesh(extrudeSurface(stabHalf, stabT), matBody);
+  stabHalfMesh.castShadow = true;
 
-  // Small belly “strake”
-  const bellyGeo = new THREE.BoxGeometry(0.9, 0.10, 2.2);
-  const belly = new THREE.Mesh(bellyGeo, matBody);
-  belly.position.set(0, -0.55, -0.2);
-  g.add(belly);
+  const stabR = stabHalfMesh;
+  const stabL = stabHalfMesh.clone();
+  stabL.scale.x = -1;
+
+  const stabGroup = new THREE.Group();
+  stabGroup.add(stabR, stabL);
+  stabGroup.position.set(0, 0.66, 4.55); // over engine + slightly back
+  stabGroup.rotation.y = 0.10;
+  g.add(stabGroup);
+
+  // Air brakes (smooth, hinged)
+  const brakeShape = roundedRectShape(0.60, 1.10, 0.20);
+  const brakeGeo = extrudeSurface(brakeShape, 0.05);
+
+  const brakeL = new THREE.Mesh(brakeGeo, matDark);
+  const brakeR = brakeL.clone();
+
+  const hingeL = new THREE.Group();
+  const hingeR = new THREE.Group();
+
+  hingeL.position.set(0.45, 0.36, 2.70);
+  hingeR.position.set(-0.45, 0.36, 2.70);
+
+  // offset so it rotates around its front edge
+  brakeL.position.set(0, 0, 0.38);
+  brakeR.position.set(0, 0, 0.38);
+
+  hingeL.add(brakeL);
+  hingeR.add(brakeR);
+
+  g.add(hingeL, hingeR);
+  g.userData.airBrakes = [hingeL, hingeR];
 
   return g;
 }
@@ -614,12 +737,10 @@ function buildBasicF16LikeModel() {
 function buildAndAttachJetModel() {
   if (!plane || !plane.userData.modelGroup) return;
 
-  const model = buildBasicF16LikeModel();
-  model.scale.setScalar(MODEL_SCALE);
-  plane.userData.modelGroup.rotation.y = MODEL_FIX_ROT_Y;
+  const model = buildNiceSweptJet();
   plane.userData.modelGroup.add(model);
+  plane.userData.airBrakes = model.userData.airBrakes || null;
 
-  // compute dimensions from the generated model
   plane.updateMatrixWorld(true);
   const bbox = new THREE.Box3().setFromObject(plane.userData.modelGroup);
   const size = new THREE.Vector3();
@@ -628,7 +749,7 @@ function buildAndAttachJetModel() {
   MODEL_DIM.ready = true;
   MODEL_DIM.size.copy(size);
 
-  // heights based on model size
+  // Clearance tuned so gear works nicely over terrain
   MODEL_DIM.bellyHeight    = Math.max(0.35, size.y * 0.18);
   MODEL_DIM.gearHeightFull = Math.max(1.10, size.y * 0.42);
 
@@ -638,18 +759,16 @@ function buildAndAttachJetModel() {
 }
 
 /* =========================
-   Aircraft container
+   Aircraft container + effects
 ========================= */
 function createAircraftContainer() {
   const root = new THREE.Group();
 
   const modelGroup = new THREE.Group();
-  modelGroup.rotation.y = MODEL_FIX_ROT_Y;
-  modelGroup.scale.setScalar(MODEL_SCALE);
   root.add(modelGroup);
   root.userData.modelGroup = modelGroup;
 
-  // fallback gear
+  // gear
   const gearGroup = new THREE.Group();
   root.add(gearGroup);
 
@@ -661,23 +780,14 @@ function createAircraftContainer() {
   const mainWheelL = new THREE.Mesh(tireGeo, tireMat); mainWheelL.castShadow = true; gearGroup.add(mainWheelL);
   const mainWheelR = new THREE.Mesh(tireGeo, tireMat); mainWheelR.castShadow = true; gearGroup.add(mainWheelR);
 
-  // default positions (will be overwritten by rebuildAircraftAnchors after model exists)
-  const noseDownPos  = new THREE.Vector3(0, -1.2, -5);
-  const mainLDownPos = new THREE.Vector3( 1.4, -1.2, 1);
-  const mainRDownPos = new THREE.Vector3(-1.4, -1.2, 1);
-
-  const noseUpPos  = new THREE.Vector3(0, -0.05, -3.9);
-  const mainLUpPos = new THREE.Vector3( 0.95, -0.15, 2.15);
-  const mainRUpPos = new THREE.Vector3(-0.95, -0.15, 2.15);
-
   const downRot = new THREE.Euler(0,0,0);
   const upRot   = new THREE.Euler(Math.PI/2, 0, 0);
 
   root.userData.gear = {
     parts: [
-      { mesh: noseWheel,  downPos: noseDownPos,  upPos: noseUpPos,  downRot: downRot, upRot: upRot },
-      { mesh: mainWheelL, downPos: mainLDownPos, upPos: mainLUpPos, downRot: downRot, upRot: upRot },
-      { mesh: mainWheelR, downPos: mainRDownPos, upPos: mainRUpPos, downRot: downRot, upRot: upRot }
+      { mesh: noseWheel,  downPos: new THREE.Vector3(), upPos: new THREE.Vector3(), downRot: downRot, upRot: upRot },
+      { mesh: mainWheelL, downPos: new THREE.Vector3(), upPos: new THREE.Vector3(), downRot: downRot, upRot: upRot },
+      { mesh: mainWheelR, downPos: new THREE.Vector3(), upPos: new THREE.Vector3(), downRot: downRot, upRot: upRot }
     ]
   };
 
@@ -723,26 +833,23 @@ function rebuildAircraftAnchors() {
   const size = MODEL_DIM.size;
   const L = size.z, W = size.x, H = size.y;
 
-  const gearY = -H * 0.55;
+  const gearY = -H * 0.58;
 
-  const noseDownPos  = new THREE.Vector3(0, gearY, -L * 0.42);
+  const noseDownPos  = new THREE.Vector3(0, gearY, -L * 0.44);
   const mainLDownPos = new THREE.Vector3( W * 0.22, gearY,  L * 0.10);
   const mainRDownPos = new THREE.Vector3(-W * 0.22, gearY,  L * 0.10);
 
-  const noseUpPos  = new THREE.Vector3(0, -H * 0.18, -L * 0.28);
-  const mainLUpPos = new THREE.Vector3( W * 0.14, -H * 0.20,  L * 0.20);
-  const mainRUpPos = new THREE.Vector3(-W * 0.14, -H * 0.20,  L * 0.20);
-
-  const downRot = new THREE.Euler(0,0,0);
-  const upRot   = new THREE.Euler(Math.PI/2, 0, 0);
+  const noseUpPos  = new THREE.Vector3(0, -H * 0.18, -L * 0.30);
+  const mainLUpPos = new THREE.Vector3( W * 0.14, -H * 0.22,  L * 0.22);
+  const mainRUpPos = new THREE.Vector3(-W * 0.14, -H * 0.22,  L * 0.22);
 
   const parts = plane.userData.gear.parts;
-  parts[0].downPos.copy(noseDownPos);  parts[0].upPos.copy(noseUpPos);  parts[0].downRot.copy(downRot); parts[0].upRot.copy(upRot);
-  parts[1].downPos.copy(mainLDownPos); parts[1].upPos.copy(mainLUpPos); parts[1].downRot.copy(downRot); parts[1].upRot.copy(upRot);
-  parts[2].downPos.copy(mainRDownPos); parts[2].upPos.copy(mainRUpPos); parts[2].downRot.copy(downRot); parts[2].upRot.copy(upRot);
+  parts[0].downPos.copy(noseDownPos);  parts[0].upPos.copy(noseUpPos);
+  parts[1].downPos.copy(mainLDownPos); parts[1].upPos.copy(mainLUpPos);
+  parts[2].downPos.copy(mainRDownPos); parts[2].upPos.copy(mainRUpPos);
 
   if (plane.userData.afterburners) {
-    const tailZ = (L * 0.52);
+    const tailZ = (L * 0.53);
     plane.userData.afterburners[0].position.set(0, 0, tailZ);
     plane.userData.afterburners[1].position.set(0, 0, tailZ + 0.12);
   }
@@ -800,6 +907,15 @@ function updatePhysics(dt) {
 
   updateInputs();
   updateGearAnimation(dt);
+
+  // Smooth airbrake animation (hinges)
+  if (plane && plane.userData.airBrakes) {
+    const open = sim.airBrake ? 0.95 : 0.0;
+    const lerpT = 1 - Math.pow(0.001, dt);
+    for (const h of plane.userData.airBrakes) {
+      h.rotation.x = THREE.MathUtils.lerp(h.rotation.x, -open, lerpT);
+    }
+  }
 
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(sim.quat);
   const up      = new THREE.Vector3(0, 1, 0).applyQuaternion(sim.quat);
