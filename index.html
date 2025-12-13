@@ -97,7 +97,6 @@
     }
   </style>
 
-  <!-- Three.js (CDN) -->
   <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 </head>
 
@@ -180,9 +179,10 @@ let keys = {};
 const MODEL_DIM = {
   ready: false,
   size: new THREE.Vector3(10, 3, 12),
-  bellyHeight: 0.50,
-  gearHeightFull: 1.45
+  bellyHeight: 0.55,
+  gearHeightFull: 1.65
 };
+
 function getClearanceMeters() {
   const gearEffect = sim.gearPos;
   return THREE.MathUtils.lerp(MODEL_DIM.bellyHeight, MODEL_DIM.gearHeightFull, gearEffect);
@@ -346,13 +346,14 @@ function getGroundHeight(x, z) {
 }
 
 /* =========================
-   Gear Animation
+   Gear + Airbrake Animation Helpers
 ========================= */
 function easeInOutCubic(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2; }
 function moveTowards(current, target, maxDelta) {
   if (Math.abs(target - current) <= maxDelta) return target;
   return current + Math.sign(target - current) * maxDelta;
 }
+
 function updateGearAnimation(dt) {
   if (!plane || !plane.userData.gear) return;
 
@@ -360,7 +361,7 @@ function updateGearAnimation(dt) {
   sim.gearPos = moveTowards(sim.gearPos, sim.gearTarget, maxStep);
 
   const t = easeInOutCubic(sim.gearPos);
-  const gearVisible = sim.gearPos >= 0.05;
+  const gearVisible = sim.gearPos >= 0.05; // keep visible until almost fully tucked
 
   for (const part of plane.userData.gear.parts) {
     part.mesh.position.set(
@@ -374,6 +375,21 @@ function updateGearAnimation(dt) {
       THREE.MathUtils.lerp(part.upRot.z, part.downRot.z, t)
     );
     part.mesh.visible = gearVisible;
+  }
+}
+
+function updateAirbrakes(dt) {
+  if (!plane || !plane.userData.airBrakes) return;
+
+  if (sim.brakePos === undefined) sim.brakePos = 0;
+  const target = sim.airBrake ? 1 : 0;
+  sim.brakePos = moveTowards(sim.brakePos, target, dt * 3.2);
+  const t = easeInOutCubic(sim.brakePos);
+
+  for (const ab of plane.userData.airBrakes) {
+    // "fold out" from the engine sides
+    ab.mesh.rotation.set(ab.baseRot.x, ab.baseRot.y, ab.baseRot.z);
+    ab.mesh.rotation.z += ab.sign * (1.15 * t);
   }
 }
 
@@ -425,7 +441,9 @@ function init() {
     airBrake: false,
 
     alpha: 0,
-    gLoad: 1.0
+    gLoad: 1.0,
+
+    brakePos: 0
   };
 
   initHillFeatures();
@@ -505,7 +523,6 @@ function init() {
   plane = createAircraftContainer();
   scene.add(plane);
 
-  // Build procedural fighter jet
   buildFighterJet();
   setLoadStatus("Ready ✅ Click Start", true);
 
@@ -595,13 +612,17 @@ function createAircraftContainer() {
 }
 
 /* =========================
-   PROCEDURAL FIGHTER JET (SOLID)
+   PROCEDURAL FIGHTER JET (SOLID) + AIRBRAKES
 ========================= */
-const TARGET_LENGTH_M = 18.0;
+const TARGET_LENGTH_M = 24.0; // bigger
 
 function buildFighterJet() {
   const mg = plane.userData.modelGroup;
   mg.clear();
+
+  // clear previous airbrake refs
+  plane.userData.airBrakes = null;
+  plane.userData.modelMetrics = null;
 
   const bodyMat   = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.65, metalness: 0.25 });
   const darkMat   = new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.85, metalness: 0.05 });
@@ -612,11 +633,12 @@ function buildFighterJet() {
   const g = new THREE.Group();
 
   // Forward = -Z
-  const fuseLen = 16.0;
-  const y0 = 1.05;
+  const fuseLen = 18.0;
+  const y0 = 1.08;
 
+  // Fuselage
   const fuselage = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.60, 0.85, fuseLen, 24, 1, false),
+    new THREE.CylinderGeometry(0.68, 0.98, fuseLen, 28, 1, false),
     bodyMat
   );
   fuselage.rotation.x = Math.PI / 2;
@@ -624,64 +646,89 @@ function buildFighterJet() {
   fuselage.castShadow = fuselage.receiveShadow = true;
   g.add(fuselage);
 
+  // Nose
   const nose = new THREE.Mesh(
-    new THREE.ConeGeometry(0.62, 2.8, 26),
+    new THREE.ConeGeometry(0.70, 3.2, 28),
     bodyMat
   );
   nose.rotation.x = -Math.PI / 2;
-  nose.position.set(0, y0, -(fuseLen * 0.5) - 1.2);
+  nose.position.set(0, y0, -(fuseLen * 0.5) - 1.4);
   nose.castShadow = nose.receiveShadow = true;
   g.add(nose);
 
-  const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.75, 24, 16), canopyMat);
-  canopy.scale.set(1.20, 0.70, 1.55);
-  canopy.position.set(0, y0 + 0.55, -(fuseLen * 0.5) + 4.3);
+  // Canopy
+  const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.86, 24, 16), canopyMat);
+  canopy.scale.set(1.22, 0.70, 1.60);
+  canopy.position.set(0, y0 + 0.62, -(fuseLen * 0.5) + 4.9);
   g.add(canopy);
 
-  const intakeGeo = new THREE.BoxGeometry(0.85, 0.55, 1.8);
-  const intakeL = new THREE.Mesh(intakeGeo, darkMat);
-  const intakeR = new THREE.Mesh(intakeGeo, darkMat);
-  intakeL.position.set(0.95, y0 - 0.05, -2.0);
-  intakeR.position.set(-0.95, y0 - 0.05, -2.0);
-  g.add(intakeL, intakeR);
+  // Remove the old “side intake boxes” that looked like random black blocks.
+  // Add a single chin intake tucked under the fuselage:
+  const chinIntake = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.55, 2.2), darkMat);
+  chinIntake.position.set(0, y0 - 0.75, -2.6);
+  g.add(chinIntake);
 
-  const wingGeo = new THREE.BoxGeometry(5.8, 0.14, 2.6);
+  // Main wings (solid thickness)
+  const wingGeo = new THREE.BoxGeometry(7.2, 0.16, 3.2);
   const wingL = new THREE.Mesh(wingGeo, bodyMat);
   const wingR = new THREE.Mesh(wingGeo, bodyMat);
 
-  wingL.position.set( 2.9, y0 - 0.10, -0.8);
-  wingR.position.set(-2.9, y0 - 0.10, -0.8);
+  wingL.position.set( 3.55, y0 - 0.12, -0.9);
+  wingR.position.set(-3.55, y0 - 0.12, -0.9);
 
-  wingL.rotation.y =  0.28;
-  wingR.rotation.y = -0.28;
+  wingL.rotation.y =  0.30;
+  wingR.rotation.y = -0.30;
 
   wingL.castShadow = wingR.castShadow = true;
   wingL.receiveShadow = wingR.receiveShadow = true;
   g.add(wingL, wingR);
 
-  const tailGeo = new THREE.BoxGeometry(2.6, 0.12, 1.6);
+  // Tailplanes / elevators (FLIPPED sweep direction vs before)
+  const tailGeo = new THREE.BoxGeometry(3.2, 0.14, 2.0);
   const tailL = new THREE.Mesh(tailGeo, bodyMat);
   const tailR = new THREE.Mesh(tailGeo, bodyMat);
 
-  tailL.position.set( 1.55, y0 + 0.05, (fuseLen * 0.5) - 3.0);
-  tailR.position.set(-1.55, y0 + 0.05, (fuseLen * 0.5) - 3.0);
+  tailL.position.set( 1.95, y0 + 0.06, (fuseLen * 0.5) - 3.6);
+  tailR.position.set(-1.95, y0 + 0.06, (fuseLen * 0.5) - 3.6);
 
-  tailL.rotation.y =  0.22;
-  tailR.rotation.y = -0.22;
+  // flipped
+  tailL.rotation.y = -0.24;
+  tailR.rotation.y =  0.24;
 
   g.add(tailL, tailR);
 
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.1, 2.2), bodyMat);
-  fin.position.set(0, y0 + 1.1, (fuseLen * 0.5) - 3.5);
-  fin.rotation.y = 0.10;
+  // Vertical stabilizer (moved further BACK + swept correctly)
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.20, 2.7, 2.6), bodyMat);
+  fin.position.set(0, y0 + 1.45, (fuseLen * 0.5) - 4.6);
+  fin.rotation.y = -0.18; // sweep back instead of “backwards”
   g.add(fin);
 
-  const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 2.0, 18), darkMat);
+  // Exhaust
+  const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.76, 2.4, 20), darkMat);
   exhaust.rotation.x = Math.PI / 2;
-  exhaust.position.set(0, y0 - 0.05, (fuseLen * 0.5) + 0.7);
+  exhaust.position.set(0, y0 - 0.05, (fuseLen * 0.5) + 1.05);
   g.add(exhaust);
 
-  // Normalize
+  // Airbrakes (left/right of engine, fold out when Space is held)
+  const brakeMat = new THREE.MeshStandardMaterial({ color: 0x80868b, roughness: 0.75, metalness: 0.10 });
+  const brakeGeo = new THREE.BoxGeometry(1.05, 0.06, 1.75);
+
+  const brakeL = new THREE.Mesh(brakeGeo, brakeMat);
+  const brakeR = new THREE.Mesh(brakeGeo, brakeMat);
+
+  // place them near the engine sides
+  brakeL.position.set( 1.05, y0 + 0.18, (fuseLen * 0.5) - 2.0);
+  brakeR.position.set(-1.05, y0 + 0.18, (fuseLen * 0.5) - 2.0);
+
+  // small inward cant so they look “mounted” to fuselage
+  brakeL.rotation.y =  0.08;
+  brakeR.rotation.y = -0.08;
+
+  g.add(brakeL, brakeR);
+
+  // -----------------------------
+  // Normalize: scale, center, sit on ground
+  // -----------------------------
   g.updateMatrixWorld(true);
 
   let box = new THREE.Box3().setFromObject(g);
@@ -701,10 +748,15 @@ function buildFighterJet() {
 
   g.updateMatrixWorld(true);
   box = new THREE.Box3().setFromObject(g);
-  g.position.y -= box.min.y;
+
+  // IMPORTANT: sit the model slightly LOWER so gear can retract INTO it
+  // (instead of retracting above it then disappearing)
+  const extraDrop = (box.max.y - box.min.y) * 0.08; // ~8% of height
+  g.position.y -= (box.min.y + extraDrop);
 
   mg.add(g);
 
+  // Update MODEL_DIM and store tail info for aligning afterburner + airbrakes
   plane.updateMatrixWorld(true);
   const bbox = new THREE.Box3().setFromObject(mg);
   const finalSize = new THREE.Vector3();
@@ -712,8 +764,24 @@ function buildFighterJet() {
 
   MODEL_DIM.ready = true;
   MODEL_DIM.size.copy(finalSize);
-  MODEL_DIM.bellyHeight    = Math.max(0.35, finalSize.y * 0.22);
-  MODEL_DIM.gearHeightFull = Math.max(0.95, finalSize.y * 0.55);
+
+  // slightly larger belly/gear heights so ground logic feels right with the lowered model
+  MODEL_DIM.bellyHeight    = Math.max(0.45, finalSize.y * 0.26);
+  MODEL_DIM.gearHeightFull = Math.max(1.10, finalSize.y * 0.62);
+
+  // Save tail Z (world-local to plane root) so afterburner aligns to exhaust/tail
+  plane.userData.modelMetrics = {
+    tailZ: bbox.max.z,
+    L: finalSize.z,
+    W: finalSize.x,
+    H: finalSize.y
+  };
+
+  // Save airbrake refs + their “base” rotations
+  plane.userData.airBrakes = [
+    { mesh: brakeL, sign: +1, baseRot: brakeL.rotation.clone() },
+    { mesh: brakeR, sign: -1, baseRot: brakeR.rotation.clone() }
+  ];
 
   rebuildAircraftAnchors();
   updateGearAnimation(0);
@@ -726,15 +794,17 @@ function rebuildAircraftAnchors() {
   const size = MODEL_DIM.size;
   const L = size.z, W = size.x, H = size.y;
 
-  const gearY = -H * 0.58;
+  // Down position still reaches runway, but UP position is now INSIDE the fuselage volume.
+  const gearY = -H * 0.62;
 
   const noseDownPos  = new THREE.Vector3(0, gearY, -L * 0.44);
   const mainLDownPos = new THREE.Vector3( W * 0.22, gearY,  L * 0.10);
   const mainRDownPos = new THREE.Vector3(-W * 0.22, gearY,  L * 0.10);
 
-  const noseUpPos  = new THREE.Vector3(0, -H * 0.18, -L * 0.30);
-  const mainLUpPos = new THREE.Vector3( W * 0.14, -H * 0.22,  L * 0.22);
-  const mainRUpPos = new THREE.Vector3(-W * 0.14, -H * 0.22,  L * 0.22);
+  // tuck gear into the body before it disappears
+  const noseUpPos  = new THREE.Vector3(0,  H * 0.10, -L * 0.30);
+  const mainLUpPos = new THREE.Vector3( W * 0.10, H * 0.06,  L * 0.22);
+  const mainRUpPos = new THREE.Vector3(-W * 0.10, H * 0.06,  L * 0.22);
 
   const parts = plane.userData.gear.parts;
   parts[0].downPos.copy(noseDownPos);  parts[0].upPos.copy(noseUpPos);
@@ -745,18 +815,21 @@ function rebuildAircraftAnchors() {
   const mainWheelL = parts[1].mesh;
   const mainWheelR = parts[2].mesh;
 
-  const noseScale = Math.max(1.0, W * 0.055);
-  const mainScale = Math.max(1.2, W * 0.065);
+  const noseScale = Math.max(1.05, W * 0.050);
+  const mainScale = Math.max(1.25, W * 0.060);
   noseWheel.scale.set(noseScale, noseScale, noseScale);
   mainWheelL.scale.set(mainScale, mainScale, mainScale);
   mainWheelR.scale.set(mainScale, mainScale, mainScale);
 
+  // Align afterburner flames to the actual tail end of the model
   if (plane.userData.afterburners) {
-    const tailZ = (L * 0.56);
-    plane.userData.afterburners[0].position.set(0, 0, tailZ);
-    plane.userData.afterburners[1].position.set(0, 0, tailZ + 0.12);
+    const metrics = plane.userData.modelMetrics;
+    const tailZ = metrics ? metrics.tailZ : (L * 0.56);
 
-    const abS = Math.max(1.2, W * 0.08);
+    plane.userData.afterburners[0].position.set(0, 0, tailZ + 0.35);
+    plane.userData.afterburners[1].position.set(0, 0, tailZ + 0.48);
+
+    const abS = Math.max(1.25, W * 0.070);
     plane.userData.afterburners[0].scale.set(abS, abS, abS);
     plane.userData.afterburners[1].scale.set(abS * 0.8, abS * 0.8, abS * 0.8);
   }
@@ -811,6 +884,7 @@ function updatePhysics(dt) {
 
   updateInputs();
   updateGearAnimation(dt);
+  updateAirbrakes(dt);
 
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(sim.quat);
   const up      = new THREE.Vector3(0, 1, 0).applyQuaternion(sim.quat);
@@ -1026,7 +1100,8 @@ function updateHUD() {
 
 function updateCamera() {
   if (!sim.pos) return;
-  const offset = new THREE.Vector3(0, 6, 28).applyQuaternion(sim.quat);
+  // pulled back a bit because the jet is bigger now
+  const offset = new THREE.Vector3(0, 7, 38).applyQuaternion(sim.quat);
   const target = sim.pos.clone().add(offset);
   if (target.y < 2) target.y = 2;
   camera.position.lerp(target, 0.1);
@@ -1052,6 +1127,8 @@ function resetPlane() {
   sim.alpha = 0;
   sim.gLoad = 1.0;
 
+  sim.brakePos = 0;
+
   input.throttle = 0;
   input.pitch = 0;
   input.roll = 0;
@@ -1061,6 +1138,7 @@ function resetPlane() {
   document.getElementById('overlay-msg').style.display = 'none';
 
   updateGearAnimation(0);
+  updateAirbrakes(0);
 }
 
 /* =========================
