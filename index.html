@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>3D Flight Demo (GLB)</title>
+  <title>3D Flight Demo (Built-in Jet)</title>
   <style>
     body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Courier New', Courier, monospace; touch-action: none; }
     #canvas-container { width: 100vw; height: 100vh; display: block; }
@@ -98,13 +98,11 @@
     small { font-weight: 600; opacity: 0.85; word-break: break-all; }
   </style>
 
+  <!-- Three.js only (no GLTFLoader) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
-  <!-- Non-module GLTF loader scripts -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/DRACOLoader.js"></script>
 </head>
-<body>
 
+<body>
 <div id="hud">
   <div class="hud-row"><span class="hud-label">SPD:</span> <span id="speed-display">0</span> kts</div>
   <div class="hud-row"><span class="hud-label">ALT:</span> <span id="alt-display">0</span> ft</div>
@@ -140,7 +138,7 @@
   <button class="btn-start">START FLIGHT</button>
 </div>
 
-<div id="loading">LOADING MODEL…</div>
+<div id="loading">LOADING…</div>
 <div id="overlay-msg" onclick="resetPlane()">CRASH<br>Click to Reset</div>
 
 <div id="throttle-container" class="touch-control">
@@ -162,23 +160,21 @@ let gameActive = false;
 
 let PHYSICS = {};
 let sim = {};
-let stallAudio = null;
 
 let input = { pitch: 0, roll: 0, yaw: 0, throttle: 0 };
 let keys = {};
 
 /* =========================
-   Model settings
+   Model settings (built-in jet)
 ========================= */
-const MODEL_URL = "./f_16_c.glb";      // MUST be next to index.html
-const MODEL_FIX_ROT_Y = Math.PI;       // flip for -Z forward
-const MODEL_SCALE = 1.0;               // change if too big/small
+const MODEL_FIX_ROT_Y = 0.0;       // our built model already faces -Z
+const MODEL_SCALE = 1.0;
 
 const MODEL_DIM = {
   ready: false,
-  size: new THREE.Vector3(12, 5, 15),
-  bellyHeight: 0.55,
-  gearHeightFull: 1.35
+  size: new THREE.Vector3(10, 3, 12),
+  bellyHeight: 0.45,
+  gearHeightFull: 1.25
 };
 
 function getClearanceMeters() {
@@ -380,12 +376,6 @@ function startGame() {
   document.getElementById('start-screen').style.display = 'none';
   gameActive = true;
   resetPlane();
-
-  if (!stallAudio) {
-    stallAudio = new Audio("stall_warning.mp3");
-    stallAudio.loop = true;
-    stallAudio.volume = 0.8;
-  }
 }
 
 function init() {
@@ -506,7 +496,8 @@ function init() {
   plane = createAircraftContainer();
   scene.add(plane);
 
-  loadAircraftModel(MODEL_URL);
+  // Built-in jet model (no GLB)
+  buildAndAttachJetModel();
 
   window.addEventListener('resize', onResize);
   document.addEventListener('keydown', e => {
@@ -525,7 +516,129 @@ function toggleGear() {
 }
 
 /* =========================
-   Aircraft container + GLB loading (DEBUGGED)
+   Built-in “F-16-ish” model
+========================= */
+function buildBasicF16LikeModel() {
+  const g = new THREE.Group();
+
+  const matBody  = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 0.55, roughness: 0.35 });
+  const matDark  = new THREE.MeshStandardMaterial({ color: 0x20242a, metalness: 0.15, roughness: 0.85 });
+  const matGlass = new THREE.MeshStandardMaterial({ color: 0x66aaff, metalness: 0.0, roughness: 0.12, transparent: true, opacity: 0.45 });
+
+  // Fuselage (length along Z). Our forward is -Z.
+  const fusGeo = new THREE.CylinderGeometry(0.55, 0.70, 9.0, 20, 1);
+  fusGeo.rotateX(Math.PI / 2);
+  const fus = new THREE.Mesh(fusGeo, matBody);
+  fus.castShadow = true;
+  fus.receiveShadow = true;
+  g.add(fus);
+
+  // Nose cone
+  const noseGeo = new THREE.ConeGeometry(0.55, 1.7, 20);
+  noseGeo.rotateX(Math.PI / 2);
+  const nose = new THREE.Mesh(noseGeo, matBody);
+  nose.position.z = -5.35;
+  nose.castShadow = true;
+  g.add(nose);
+
+  // Canopy
+  const canopyGeo = new THREE.SphereGeometry(0.75, 18, 12, 0, Math.PI);
+  const canopy = new THREE.Mesh(canopyGeo, matGlass);
+  canopy.scale.set(1.2, 0.8, 1.8);
+  canopy.position.set(0, 0.55, -1.6);
+  canopy.castShadow = true;
+  g.add(canopy);
+
+  // Intake “chin”
+  const intakeGeo = new THREE.BoxGeometry(0.95, 0.55, 1.15);
+  const intake = new THREE.Mesh(intakeGeo, matDark);
+  intake.position.set(0, -0.45, -2.3);
+  intake.castShadow = true;
+  g.add(intake);
+
+  // Wings (swept)
+  const wingGeo = new THREE.BoxGeometry(6.1, 0.12, 2.1);
+  const wing = new THREE.Mesh(wingGeo, matBody);
+  wing.position.set(0, -0.12, 0.25);
+  wing.rotation.y = 0.16;
+  wing.castShadow = true;
+  g.add(wing);
+
+  // Wing tip “missile rails”
+  const railGeo = new THREE.BoxGeometry(0.2, 0.12, 1.2);
+  const railL = new THREE.Mesh(railGeo, matDark);
+  const railR = railL.clone();
+  railL.position.set(3.1, -0.18, 0.15);
+  railR.position.set(-3.1, -0.18, 0.15);
+  railL.rotation.y = 0.16;
+  railR.rotation.y = 0.16;
+  g.add(railL, railR);
+
+  // Tail / engine section
+  const tailGeo = new THREE.CylinderGeometry(0.62, 0.55, 2.1, 20);
+  tailGeo.rotateX(Math.PI / 2);
+  const tail = new THREE.Mesh(tailGeo, matDark);
+  tail.position.z = 4.8;
+  tail.castShadow = true;
+  g.add(tail);
+
+  // Vertical stabilizer
+  const finGeo = new THREE.BoxGeometry(0.18, 1.85, 1.75);
+  const fin = new THREE.Mesh(finGeo, matBody);
+  fin.position.set(0, 1.0, 3.9);
+  fin.rotation.x = -0.15;
+  fin.castShadow = true;
+  g.add(fin);
+
+  // Horizontal stabilizers
+  const stabGeo = new THREE.BoxGeometry(2.3, 0.10, 1.05);
+  const stabL = new THREE.Mesh(stabGeo, matBody);
+  const stabR = stabL.clone();
+  stabL.position.set(1.25, 0.10, 3.55);
+  stabR.position.set(-1.25, 0.10, 3.55);
+  stabL.rotation.y = 0.20;
+  stabR.rotation.y = -0.20;
+  stabL.castShadow = true;
+  stabR.castShadow = true;
+  g.add(stabL, stabR);
+
+  // Small belly “strake”
+  const bellyGeo = new THREE.BoxGeometry(0.9, 0.10, 2.2);
+  const belly = new THREE.Mesh(bellyGeo, matBody);
+  belly.position.set(0, -0.55, -0.2);
+  g.add(belly);
+
+  return g;
+}
+
+function buildAndAttachJetModel() {
+  if (!plane || !plane.userData.modelGroup) return;
+
+  const model = buildBasicF16LikeModel();
+  model.scale.setScalar(MODEL_SCALE);
+  plane.userData.modelGroup.rotation.y = MODEL_FIX_ROT_Y;
+  plane.userData.modelGroup.add(model);
+
+  // compute dimensions from the generated model
+  plane.updateMatrixWorld(true);
+  const bbox = new THREE.Box3().setFromObject(plane.userData.modelGroup);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+
+  MODEL_DIM.ready = true;
+  MODEL_DIM.size.copy(size);
+
+  // heights based on model size
+  MODEL_DIM.bellyHeight    = Math.max(0.35, size.y * 0.18);
+  MODEL_DIM.gearHeightFull = Math.max(1.10, size.y * 0.42);
+
+  rebuildAircraftAnchors();
+  updateGearAnimation(0);
+  resetPlane();
+}
+
+/* =========================
+   Aircraft container
 ========================= */
 function createAircraftContainer() {
   const root = new THREE.Group();
@@ -535,14 +648,6 @@ function createAircraftContainer() {
   modelGroup.scale.setScalar(MODEL_SCALE);
   root.add(modelGroup);
   root.userData.modelGroup = modelGroup;
-
-  const placeholder = new THREE.Mesh(
-    new THREE.BoxGeometry(2, 0.6, 6),
-    new THREE.MeshStandardMaterial({ color: 0xb0b7c0, metalness: 0.6, roughness: 0.35 })
-  );
-  placeholder.castShadow = true;
-  modelGroup.add(placeholder);
-  root.userData.placeholder = placeholder;
 
   // fallback gear
   const gearGroup = new THREE.Group();
@@ -556,6 +661,7 @@ function createAircraftContainer() {
   const mainWheelL = new THREE.Mesh(tireGeo, tireMat); mainWheelL.castShadow = true; gearGroup.add(mainWheelL);
   const mainWheelR = new THREE.Mesh(tireGeo, tireMat); mainWheelR.castShadow = true; gearGroup.add(mainWheelR);
 
+  // default positions (will be overwritten by rebuildAircraftAnchors after model exists)
   const noseDownPos  = new THREE.Vector3(0, -1.2, -5);
   const mainLDownPos = new THREE.Vector3( 1.4, -1.2, 1);
   const mainRDownPos = new THREE.Vector3(-1.4, -1.2, 1);
@@ -611,121 +717,21 @@ function createAircraftContainer() {
   return root;
 }
 
-function loadAircraftModel(url) {
-  const loadingEl = document.getElementById('loading');
-  loadingEl.style.display = 'block';
-
-  const abs = new URL(url, window.location.href).href;
-  loadingEl.innerHTML = `LOADING MODEL…<br><small>${abs}</small>`;
-  console.log("Model URL:", abs);
-
-  // If the loader scripts didn't load, you’ll hang forever without this.
-  if (!THREE.GLTFLoader) {
-    loadingEl.innerHTML = `GLTFLoader FAILED TO LOAD<br><small>Loader CDN blocked or script tags failed.</small>`;
-    console.error("THREE.GLTFLoader missing: GLTFLoader.js did not load.");
-    return;
-  }
-
-  // If you're on GitHub Pages and used Git LFS, it often serves a text pointer file.
-  // This "slow-hang" check nudges you where to look.
-  const hangTimer = setTimeout(() => {
-    loadingEl.innerHTML =
-      `STILL LOADING…<br><small>If this never finishes: open DevTools → Network → find f_16_c.glb<br>Common issues: 404 (wrong name/path), CORS/file:// (not served), or Git LFS pointer file.</small>`;
-  }, 6000);
-
-  const loader = new THREE.GLTFLoader();
-
-  const dracoLoader = new THREE.DRACOLoader();
-  dracoLoader.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/");
-  loader.setDRACOLoader(dracoLoader);
-
-  loader.load(
-    url,
-    (gltf) => {
-      clearTimeout(hangTimer);
-      loadingEl.style.display = 'none';
-
-      if (plane.userData.placeholder) {
-        plane.userData.modelGroup.remove(plane.userData.placeholder);
-        plane.userData.placeholder.geometry.dispose();
-        plane.userData.placeholder.material.dispose();
-        plane.userData.placeholder = null;
-      }
-
-      const model = gltf.scene;
-
-      model.traverse((o) => {
-        if (o.isMesh) {
-          o.castShadow = true;
-          o.receiveShadow = true;
-          if (o.material && o.material.map) o.material.map.colorSpace = THREE.SRGBColorSpace;
-        }
-      });
-
-      // Center the model so anchors (gear/vapor/afterburner) behave
-      const bbox = new THREE.Box3().setFromObject(model);
-      const center = new THREE.Vector3();
-      bbox.getCenter(center);
-      model.position.sub(center);
-
-      plane.userData.modelGroup.add(model);
-
-      // recompute bbox after scale/rotation
-      plane.updateMatrixWorld(true);
-      const bbox2 = new THREE.Box3().setFromObject(plane.userData.modelGroup);
-      const size = new THREE.Vector3();
-      bbox2.getSize(size);
-
-      MODEL_DIM.ready = true;
-      MODEL_DIM.size.copy(size);
-      MODEL_DIM.bellyHeight    = Math.max(0.35, size.y * 0.10);
-      MODEL_DIM.gearHeightFull = Math.max(1.10, size.y * 0.20);
-
-      rebuildAircraftAnchors();
-      updateGearAnimation(0);
-      resetPlane(); // snap spawn clearance to model size
-      console.log("Model loaded. Size:", size);
-    },
-    (xhr) => {
-      if (xhr.total) {
-        const pct = Math.round((xhr.loaded / xhr.total) * 100);
-        loadingEl.innerHTML = `LOADING MODEL… ${pct}%<br><small>${abs}</small>`;
-      } else {
-        loadingEl.innerHTML = `LOADING MODEL…<br><small>${abs}</small>`;
-      }
-    },
-    (err) => {
-      clearTimeout(hangTimer);
-      console.error("GLB load failed:", err);
-
-      // Show something actionable right on screen
-      const msg =
-        `MODEL LOAD FAILED<br><small>
-         Open DevTools → Console + Network.<br>
-         If Network shows 404: filename/path mismatch.<br>
-         If CORS / Failed to fetch: you opened file:// or server blocked it.<br>
-         If Content-Type is text/html: it's loading a page instead of the .glb.</small>`;
-
-      loadingEl.innerHTML = msg;
-    }
-  );
-}
-
 function rebuildAircraftAnchors() {
   if (!plane || !plane.userData.gear || !MODEL_DIM.ready) return;
 
   const size = MODEL_DIM.size;
   const L = size.z, W = size.x, H = size.y;
 
-  const gearY = -H * 0.45;
+  const gearY = -H * 0.55;
 
-  const noseDownPos  = new THREE.Vector3(0, gearY, -L * 0.38);
-  const mainLDownPos = new THREE.Vector3( W * 0.22, gearY,  L * 0.08);
-  const mainRDownPos = new THREE.Vector3(-W * 0.22, gearY,  L * 0.08);
+  const noseDownPos  = new THREE.Vector3(0, gearY, -L * 0.42);
+  const mainLDownPos = new THREE.Vector3( W * 0.22, gearY,  L * 0.10);
+  const mainRDownPos = new THREE.Vector3(-W * 0.22, gearY,  L * 0.10);
 
-  const noseUpPos  = new THREE.Vector3(0, -H * 0.12, -L * 0.24);
-  const mainLUpPos = new THREE.Vector3( W * 0.14, -H * 0.14,  L * 0.18);
-  const mainRUpPos = new THREE.Vector3(-W * 0.14, -H * 0.14,  L * 0.18);
+  const noseUpPos  = new THREE.Vector3(0, -H * 0.18, -L * 0.28);
+  const mainLUpPos = new THREE.Vector3( W * 0.14, -H * 0.20,  L * 0.20);
+  const mainRUpPos = new THREE.Vector3(-W * 0.14, -H * 0.20,  L * 0.20);
 
   const downRot = new THREE.Euler(0,0,0);
   const upRot   = new THREE.Euler(Math.PI/2, 0, 0);
@@ -766,8 +772,8 @@ function updateInputs() {
   if (keys['KeyS']) input.throttle -= 0.02;
   input.throttle = THREE.MathUtils.clamp(input.throttle, 0, 1);
 
-  sim.afterburner = keys['KeyA'];
-  sim.airBrake    = keys['Space'];
+  sim.afterburner = !!keys['KeyA'];
+  sim.airBrake    = !!keys['Space'];
 
   let keyPitchCmd = 0;
   if (keys['ArrowDown']) keyPitchCmd = 1;
@@ -1051,17 +1057,6 @@ function updateHUD() {
 
   document.getElementById('throttle-fill').style.height = barHeight + '%';
   document.getElementById('throttle-fill').style.backgroundColor = barColor;
-
-  if (stallAudio) {
-    if (sim.stalled) {
-      if (stallAudio.paused) {
-        stallAudio.currentTime = 0;
-        stallAudio.play().catch(()=>{});
-      }
-    } else {
-      if (!stallAudio.paused) stallAudio.pause();
-    }
-  }
 }
 
 function updateCamera() {
