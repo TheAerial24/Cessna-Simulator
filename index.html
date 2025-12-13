@@ -1,1 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>3D Flight Demo</title>
+  <style>
+    body { margin: 0; overflow: hidden; background:#87CEEB; font-family: 'Courier New', Courier, monospace; touch-action:none; }
+    #canvas-container { width: 100vw; height: 100vh; display:block; }
 
+    #hud {
+      position: absolute; top: 20px; left: 20px;
+      color: #0f0; background: rgba(0,0,0,0.5);
+      padding: 15px; border-radius: 8px;
+      pointer-events: none; user-select: none;
+      border: 2px solid #0f0; box-shadow: 0 0 10px #0f0;
+      z-index: 10; min-width: 150px;
+    }
+    .hud-row { margin-bottom: 5px; font-weight: bold; display:flex; justify-content:space-between; }
+    .hud-label { margin-right: 10px; }
+    .warning { color: red; animation: blink 0.5s infinite; display:none; text-align:center; margin-top:5px; }
+    @keyframes blink { 50% { opacity:0; } }
+
+    #controls-help {
+      position: absolute; top: 20px; right: 20px;
+      text-align: right; color: white;
+      background: rgba(0,0,0,0.5);
+      padding: 10px; border-radius: 5px;
+      font-family: sans-serif; font-size: 12px;
+      pointer-events: none; z-index: 10; display:none;
+    }
+    @media (min-width: 800px) { #controls-help { display:block; } }
+
+    #overlay-msg, #start-screen {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: white; font-family: sans-serif; font-weight: bold;
+      background: rgba(0,0,0,0.8);
+      padding: 30px; border-radius: 10px; text-align: center;
+      z-index: 20; cursor: pointer; border: 2px solid white;
+    }
+    #overlay-msg { display:none; font-size:24px; }
+    #start-screen { display:flex; flex-direction:column; align-items:center; gap:10px; }
+
+    h1 { margin:0 0 10px 0; font-size:28px; text-transform:uppercase; color:#87CEEB; }
+    p { margin:5px 0; color:#ddd; }
+    .key { background:#333; padding:2px 6px; border-radius:4px; border:1px solid #666; font-family: monospace; }
+    .btn-start { margin-top:20px; padding:10px 30px; font-size:20px; background:#2196F3; color:white; border:none; border-radius:5px; cursor:pointer; }
+    .btn-start:hover { background:#1976D2; }
+
+    .touch-control { position:absolute; z-index:15; user-select:none; touch-action:none; }
+
+    #throttle-container {
+      bottom: 40px; left: 40px;
+      width: 40px; height: 200px;
+      background: rgba(0,0,0,0.3);
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 20px;
+    }
+    #throttle-fill {
+      position:absolute; bottom:0; left:0;
+      width:100%; height:0%;
+      background:#ffcc00;
+      border-radius: 18px;
+      pointer-events:none;
+    }
+    #throttle-label {
+      position:absolute; top:-25px; left:0; width:100%;
+      text-align:center; color:white; font-weight:bold; font-size:12px;
+      text-shadow: 1px 1px 0 #000;
+    }
+
+    #reset-btn {
+      bottom: 20px; right: 20px;
+      width: 40px; height: 40px;
+      background: rgba(255,0,0,0.5);
+      border: 2px solid white;
+      border-radius: 8px;
+      color: white;
+      display:flex; align-items:center; justify-content:center;
+      font-weight:bold; cursor:pointer;
+    }
+  </style>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+
+<div id="hud">
+  <div class="hud-row"><span class="hud-label">SPD:</span> <span id="speed-display">0</span> kts</div>
+  <div class="hud-row"><span class="hud-label">ALT:</span> <span id="alt-display">0</span> ft</div>
+  <div class="hud-row"><span class="hud-label">HDG:</span> <span id="hdg-display">0</span>°</div>
+  <div class="hud-row"><span class="hud-label">THR:</span> <span id="thr-display">0</span>%</div>
+  <div class="hud-row"><span class="hud-label">VSI:</span> <span id="vsi-display">0</span> fpm</div>
+  <div class="hud-row"><span class="hud-label">AOA:</span> <span id="aoa-display">0</span>°</div>
+  <div class="hud-row"><span class="hud-label">G:</span> <span id="g-display">1.0</span></div>
+  <div class="hud-row"><span class="hud-label">GEAR:</span> <span id="gear-display">DWN</span></div>
+  <div id="brake-warning" class="warning">BRAKE</div>
+  <div id="stall-warning" class="warning">STALL</div>
+</div>
+
+<div id="controls-help">
+  <b>Controls:</b><br>
+  <span class="key">W</span> / <span class="key">S</span> - Throttle<br>
+  <span class="key">A</span> - Afterburner<br>
+  <span class="key">Space</span> - Air Brake / Brakes<br>
+  <span class="key">G</span> - Landing Gear<br>
+  Arrows - Pitch/Roll & Steering<br>
+  <span class="key">Q</span> / <span class="key">E</span> - Rudder<br>
+  <i>Hold Down Arrow at 110kts to Fly</i>
+</div>
+
+<div id="start-screen">
+  <h1>3D Flight Demo</h1>
+  <p>Click to Start</p>
+  <button class="btn-start" id="btn-start">START FLIGHT</button>
+</div>
+
+<div id="overlay-msg">CRASH<br>Click to Reset</div>
+
+<div id="throttle-container" class="touch-control">
+  <div id="throttle-label">THR</div>
+  <div id="throttle-fill"></div>
+</div>
+
+<div id="reset-btn" class="touch-control">R</div>
+
+<div id="canvas-container"></div>
+
+<script src="./main.js"></script>
+</body>
+</html>
