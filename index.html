@@ -159,11 +159,12 @@
 
 <div id="controls-help">
   <b>Controls:</b><br>
-  <span class="key">W</span> / <span class="key">S</span> - Throttle <br>
-  <span class="key">A</span> - Afterburner <br>
-  <span class="key">Space</span> - Air Brake / Brake<br>
-  <span class="key">G</span> - Landing Gear<br>
-  Arrows - Pitch/Roll <br>
+  <span class="key">W</span> / <span class="key">S</span> - Throttle (Hold W)<br>
+  <span class="key">A</span> - Afterburner (Hold)<br>
+  <span class="key">Space</span> - Air Brake / Wheel Brakes<br>
+  <span class="key">G</span> - Toggle Landing Gear<br>
+  <span class="key">F</span> - Flares<br>
+  Arrows - Pitch/Roll & Steering<br>
   <span class="key">Q</span> / <span class="key">E</span> - Rudder<br>
   <i>Hold Down Arrow at 110kts to Fly</i>
 </div>
@@ -175,6 +176,7 @@
   <p>Hold <span class="key">A</span> for Afterburner</p>
   <p>Hold <span class="key">Space</span> for Air Brake / Brakes</p>
   <p>Use <span class="key">G</span> for Landing Gear</p>
+  <p>Use <span class="key">F</span> for Flares</p>
   <p>Use <span class="key">Arrows</span> to Steer/Fly</p>
   <button class="btn-start">START FLIGHT</button>
 </div>
@@ -217,6 +219,19 @@ const VISUALS = {
 // Inputs
 let input = { pitch: 0, roll: 0, yaw: 0, throttle: 0 };
 let keys = {};
+
+// =========================
+// Flares (countermeasures)
+// =========================
+let flareGroup;
+const FLARES = [];
+const FLARE = {
+  max: 24,
+  life: 3.0,          // seconds
+  gravity: -9.0,      // world units/s^2
+  drag: 0.35,         // velocity damping
+  size: 0.35
+};
 
 /* =========================
    World & Terrain (mountains + valley + triangle grid)
@@ -376,6 +391,94 @@ function getGroundHeight(x, z) {
 }
 
 /* =========================
+   Flares
+========================= */
+function spawnFlare() {
+  if (!plane || !sim || sim.crashed) return;
+
+  // cap count
+  while (FLARES.length >= FLARE.max) {
+    const old = FLARES.shift();
+    if (old?.mesh) flareGroup.remove(old.mesh);
+    if (old?.light) flareGroup.remove(old.light);
+  }
+
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xffaa33,
+    transparent: true,
+    opacity: 1.0
+  });
+
+  const geo = new THREE.SphereGeometry(FLARE.size, 10, 10);
+  const mesh = new THREE.Mesh(geo, mat);
+
+  // Start position: slightly behind & below the plane
+  const back = new THREE.Vector3(0, -0.3, 7.0).applyQuaternion(sim.quat);
+  mesh.position.copy(sim.pos).add(back);
+
+  // Velocity: inherit aircraft velocity + kick back/down + random spread
+  const v = sim.vel.clone();
+  const kickBack = new THREE.Vector3(0, -0.8, 1.0).applyQuaternion(sim.quat);
+  kickBack.multiplyScalar(18 + Math.random() * 10);
+  v.add(kickBack);
+
+  // Random sideways scatter
+  const scatter = new THREE.Vector3(
+    (Math.random() - 0.5) * 6,
+    (Math.random() - 0.5) * 2,
+    (Math.random() - 0.5) * 6
+  );
+  v.add(scatter);
+
+  flareGroup.add(mesh);
+
+  // Optional point light (comment out if performance drops)
+  const light = new THREE.PointLight(0xffaa33, 1.2, 40, 2.0);
+  light.position.copy(mesh.position);
+  flareGroup.add(light);
+
+  FLARES.push({
+    mesh,
+    light,
+    vel: v,
+    age: 0
+  });
+}
+
+function updateFlares(dt) {
+  for (let i = FLARES.length - 1; i >= 0; i--) {
+    const f = FLARES[i];
+    f.age += dt;
+
+    f.vel.multiplyScalar(1.0 - FLARE.drag * dt);
+    f.vel.y += FLARE.gravity * dt;
+
+    f.mesh.position.add(f.vel.clone().multiplyScalar(dt));
+    if (f.light) f.light.position.copy(f.mesh.position);
+
+    const t = 1.0 - (f.age / FLARE.life);
+    const a = Math.max(0, t);
+    f.mesh.material.opacity = a;
+    if (f.light) f.light.intensity = 1.2 * a;
+
+    if (f.age >= FLARE.life) {
+      flareGroup.remove(f.mesh);
+      if (f.light) flareGroup.remove(f.light);
+      FLARES.splice(i, 1);
+    }
+  }
+}
+
+function clearFlares() {
+  if (!flareGroup) return;
+  for (const f of FLARES) {
+    if (f.mesh) flareGroup.remove(f.mesh);
+    if (f.light) flareGroup.remove(f.light);
+  }
+  FLARES.length = 0;
+}
+
+/* =========================
    Start / Init
 ========================= */
 function startGame() {
@@ -448,6 +551,10 @@ function init() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87CEEB);
   scene.fog = new THREE.Fog(0xbfd5ff, 4500, 26000);
+
+  // Flares group
+  flareGroup = new THREE.Group();
+  scene.add(flareGroup);
 
   renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -523,6 +630,7 @@ function init() {
   document.addEventListener('keydown', e => {
     keys[e.code] = true;
     if (e.code === 'KeyG') toggleGear();
+    if (e.code === 'KeyF') spawnFlare();
   });
   document.addEventListener('keyup', e => keys[e.code] = false);
 
@@ -547,7 +655,7 @@ function updateInputs() {
 
   let kYaw = (keys['KeyQ'] ? 1 : 0) - (keys['KeyE'] ? 1 : 0);
 
-  if (keys['KeyW']) input.throttle += 0.02;
+  if (keys['KeyW']) input.throttle += 0.015;
   if (keys['KeyS']) input.throttle -= 0.02;
   input.throttle = THREE.MathUtils.clamp(input.throttle, 0, 1);
 
@@ -578,7 +686,7 @@ function updateGearAnimation(dt) {
   if (!plane) return;
 
   // Slower animation speed
-  const speed = 2.5; // lower = slower
+  const speed = 3.0; // lower = slower
   sim.gearPos += (sim.gearTarget - sim.gearPos) * (1 - Math.exp(-speed * dt));
 
   // ease
@@ -969,6 +1077,8 @@ function resetPlane() {
   input.roll = 0;
   input.yaw = 0;
 
+  clearFlares();
+
   if (plane) {
     if (plane.userData.gearGroup) plane.userData.gearGroup.visible = true;
     if (plane.userData.airBrakeL) plane.userData.airBrakeL.rotation.y = 0;
@@ -1348,6 +1458,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.1);
   updatePhysics(dt);
   updateGearAnimation(dt);
+  updateFlares(dt);
   updateHUD();
   updateCamera();
   renderer.render(scene, camera);
