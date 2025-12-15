@@ -559,8 +559,8 @@ function updateInputs() {
   if (keys['ArrowUp']) keyPitchCmd = -1;
 
   let keyRollCmd = 0;
-  if (keys['ArrowRight']) keyRollCmd = 0.9;
-  if (keys['ArrowLeft']) keyRollCmd = -0.9;
+  if (keys['ArrowRight']) keyRollCmd = 1;
+  if (keys['ArrowLeft']) keyRollCmd = -1;
 
   if (sim.onGround) {
     if (kYaw === 0 && Math.abs(keyRollCmd) > 0) kYaw = keyRollCmd * 0.5;
