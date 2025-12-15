@@ -48,7 +48,7 @@
     @media (min-width: 800px) { #controls-help { display: block; } }
 
     /* Overlays */
-    #overlay-msg, #start-screen {
+    #overlay-msg, #start-screen, #pause-msg {
       position: absolute;
       top: 50%;
       left: 50%;
@@ -66,6 +66,7 @@
       max-width: min(560px, calc(100vw - 40px));
     }
     #overlay-msg { display: none; font-size: 24px; }
+    #pause-msg { display: none; font-size: 28px; z-index: 25; }
     #start-screen { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 
     h1 { margin: 0 0 10px 0; font-size: 28px; text-transform: uppercase; color: #87CEEB; }
@@ -125,17 +126,18 @@
     #reset-btn {
       bottom: 20px;
       right: 20px;
-      width: 40px;
-      height: 40px;
+      width: 44px;
+      height: 44px;
       background: rgba(255, 0, 0, 0.5);
       border: 2px solid white;
-      border-radius: 8px;
+      border-radius: 10px;
       color: white;
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: bold;
       cursor: pointer;
+      font-family: sans-serif;
     }
   </style>
 
@@ -164,6 +166,7 @@
   <span class="key">Space</span> - Air Brake / Wheel Brakes<br>
   <span class="key">G</span> - Toggle Landing Gear<br>
   <span class="key">F</span> - Flares (Hold)<br>
+  <span class="key">P</span> - Pause / Resume<br>
   Arrows - Pitch/Roll & Steering<br>
   <span class="key">Q</span> / <span class="key">E</span> - Rudder<br>
   <i>Hold Down Arrow at 110kts to Fly</i>
@@ -177,18 +180,20 @@
   <p>Hold <span class="key">Space</span> for Air Brake / Brakes</p>
   <p>Use <span class="key">G</span> for Landing Gear</p>
   <p>Hold <span class="key">F</span> for Flares</p>
+  <p>Press <span class="key">P</span> to Pause</p>
   <p>Use <span class="key">Arrows</span> to Steer/Fly</p>
   <button class="btn-start">START FLIGHT</button>
 </div>
 
 <div id="overlay-msg" onclick="resetPlane()">CRASH<br>Tap to Restart</div>
+<div id="pause-msg" onclick="togglePause()">PAUSED<br><span style="font-size:14px; opacity:.8;">Press P to Resume</span></div>
 
 <div id="throttle-container" class="touch-control">
   <div id="throttle-label">THR</div>
   <div id="throttle-fill"></div>
 </div>
 
-<div id="reset-btn" class="touch-control" onclick="resetPlane()">R</div>
+<div id="reset-btn" class="touch-control" onclick="resetPlane()">↻</div>
 
 <div id="canvas-container"></div>
 
@@ -199,6 +204,7 @@
 let scene, camera, renderer, clock;
 let plane;
 let gameActive = false;
+let paused = false;
 
 // Physics & Sim State
 let PHYSICS = {};
@@ -377,10 +383,19 @@ function getGroundHeight(x, z) {
 }
 
 /* =========================
-   Flares (EXACT flare demo logic, mapped to KeyF)
+   Pause
+========================= */
+function togglePause() {
+  if (!gameActive) return;
+  paused = !paused;
+  document.getElementById('pause-msg').style.display = paused ? 'block' : 'none';
+}
+
+/* =========================
+   Flares (EXACT flare demo logic, deployed with F)
 ========================= */
 const FLARE_COOLDOWN = 100; // ms between flares in a burst
-const FLARE_LIFETIME = 5.0; // Seconds
+const FLARE_LIFETIME = 5.0; // seconds
 const SMOKE_RATE = 0.05;
 
 let flares = [];
@@ -436,19 +451,19 @@ function spawnFlare() {
   glare.scale.set(2, 2, 1);
   flareMesh.add(glare);
 
-  // Same placement as flare demo, adapted for this jet (forward is -Z here)
+  // Placement (same relative as flare demo; jet forward is -Z here)
   flareMesh.position.copy(plane.position);
-  const offset = new THREE.Vector3(0.5 * flareSideToggle, -0.5, 3); // demo had z=-3 (behind +Z); here behind is +Z
+  const offset = new THREE.Vector3(0.5 * flareSideToggle, -0.5, 3);
   offset.applyQuaternion(sim.quat);
   flareMesh.position.add(offset);
 
   scene.add(flareMesh);
 
-  // Same physics idea as flare demo: inherit aircraft velocity + eject impulse
+  // Physics: inherit aircraft velocity + eject impulse
   const planeVelocity = sim.vel.clone();
 
-  // demo ejectDir: (6*side, -4, -2) where +Z is forward, so z=-2 is "back"
-  // here -Z is forward, so "back" is +Z => z=+2
+  // Demo ejectDir: (6*side, -4, -2) with +Z forward
+  // Here -Z forward, so "back" is +Z => z=+2
   const ejectDir = new THREE.Vector3(6 * flareSideToggle, -4, 2);
   ejectDir.applyQuaternion(sim.quat);
 
@@ -495,7 +510,6 @@ function updateFlares(dt) {
       f.isDead = true;
     }
   }
-
   flares = flares.filter(f => !f.isDead);
 }
 
@@ -504,7 +518,6 @@ function spawnSmoke(position) {
   const sprite = new THREE.Sprite(material);
 
   sprite.position.copy(position);
-
   sprite.position.x += (Math.random() - 0.5) * 0.3;
   sprite.position.y += (Math.random() - 0.5) * 0.3;
   sprite.position.z += (Math.random() - 0.5) * 0.3;
@@ -565,9 +578,10 @@ function clearFlares() {
 function startGame() {
   document.getElementById('start-screen').style.display = 'none';
   gameActive = true;
+  paused = false;
+  document.getElementById('pause-msg').style.display = 'none';
   resetPlane();
 
-  // prime audio after user interaction
   if (!stallAudio) {
     stallAudio = new Audio("stall_warning.mp3");
     stallAudio.loop = true;
@@ -701,9 +715,14 @@ function init() {
   if (plane && plane.userData.gearGroup) plane.userData.gearGroup.visible = true;
 
   window.addEventListener('resize', onResize);
-  document.addEventListener('keydown', e => {
+  document.addEventListener('keydown', (e) => {
     keys[e.code] = true;
+
+    // prevent toggle spam from key-repeat
+    if (e.repeat) return;
+
     if (e.code === 'KeyG') toggleGear();
+    if (e.code === 'KeyP') togglePause();
   });
   document.addEventListener('keyup', e => keys[e.code] = false);
 
@@ -829,6 +848,7 @@ function updatePhysics(dt) {
   const thrustFactor = Math.max(0.4, 1 - (speed / 350));
   const thrustForce = forward.clone().multiplyScalar(currentThrottle * PHYSICS.maxThrust * thrustFactor * abBoost);
 
+  // Visuals: afterburner flames
   if (plane && plane.userData.afterburners) {
     const speedFactor = THREE.MathUtils.clamp(speed / 250, 0, 1.2);
     plane.userData.afterburners.forEach((ab, idx) => {
@@ -842,6 +862,7 @@ function updatePhysics(dt) {
     });
   }
 
+  // Visuals: airbrake panels
   if (plane) {
     const brakeSpeed = 5.0 * dt;
     const targetRot = sim.airBrake ? 0.9 : 0;
@@ -863,6 +884,7 @@ function updatePhysics(dt) {
     .add(thrustForce)
     .add(gravityForce);
 
+  // Ground handling (runway only). Off-runway: crash on any contact.
   const gearHeight  = 1.35;
   const bellyHeight = 0.5;
 
@@ -889,6 +911,7 @@ function updatePhysics(dt) {
       if (sim.onGround) {
         if (sim.pos.y < contactY) sim.pos.y = contactY;
 
+        // touchdown dust
         if (!wasOnGround && plane && plane.userData.dust) {
           const touchdownSpeed = sim.vel.length();
           plane.userData.dust.material.opacity = THREE.MathUtils.clamp(touchdownSpeed / 60, 0.2, 0.8);
@@ -956,13 +979,16 @@ function updatePhysics(dt) {
 
   const torqueLocal = new THREE.Vector3(pitchTorque, controlYaw, controlRoll);
 
+  // G-load
   const accelNoDt = totalForce.clone().divideScalar(PHYSICS.mass);
   const properAccel = accelNoDt.clone().sub(new THREE.Vector3(0, -PHYSICS.gravity, 0));
   sim.gLoad = THREE.MathUtils.clamp(properAccel.dot(up) / PHYSICS.gravity, -3, 9);
 
+  // integrate linear
   sim.vel.add(totalForce.divideScalar(PHYSICS.mass).multiplyScalar(dt));
   sim.pos.add(sim.vel.clone().multiplyScalar(dt));
 
+  // integrate angular
   const angAccel = new THREE.Vector3(
     torqueLocal.x / PHYSICS.momentInertia.x,
     torqueLocal.y / PHYSICS.momentInertia.y,
@@ -985,6 +1011,7 @@ function updatePhysics(dt) {
     sim.angularVel.z *= 0.8;
   }
 
+  // vapor
   if (plane && plane.userData.vaporL) {
     const aoaStrength = THREE.MathUtils.clamp(Math.abs(sim.alpha) / PHYSICS.stallAngle, 0, 1);
     const speedFactor = THREE.MathUtils.clamp(speed / 120, 0, 1);
@@ -1001,12 +1028,14 @@ function updatePhysics(dt) {
     }
   }
 
+  // dust fade-out
   if (plane && plane.userData.dust) {
     plane.userData.dust.material.opacity *= 0.75;
     plane.userData.dust.material.opacity -= 0.6 * dt;
     if (plane.userData.dust.material.opacity < 0) plane.userData.dust.material.opacity = 0;
   }
 
+  // below world => crash
   if (sim.pos.y < -50) {
     sim.crashed = true;
     document.getElementById('overlay-msg').innerHTML = "CRASH<br>Click to Reset";
@@ -1076,6 +1105,7 @@ function updateHUD() {
   document.getElementById('stall-warning').style.display = sim.stalled ? 'block' : 'none';
   document.getElementById('brake-warning').style.display = (sim.airBrake && sim.onGround) ? 'block' : 'none';
 
+  // throttle bar
   let barHeight = input.throttle * 100;
   let barColor = '#ffcc00';
   if (sim.airBrake) barHeight = 0;
@@ -1083,6 +1113,7 @@ function updateHUD() {
   document.getElementById('throttle-fill').style.height = barHeight + '%';
   document.getElementById('throttle-fill').style.backgroundColor = barColor;
 
+  // stall audio (optional file)
   if (stallAudio) {
     if (sim.stalled) {
       if (stallAudio.paused) {
@@ -1105,6 +1136,9 @@ function updateCamera() {
 }
 
 function resetPlane() {
+  paused = false;
+  document.getElementById('pause-msg').style.display = 'none';
+
   sim.pos.set(SPAWN.x, WORLD.runwayY + 1.35, SPAWN.z);
   sim.vel.set(0, 0, 0);
   sim.quat.set(0, 0, 0, 1);
@@ -1171,23 +1205,27 @@ function createJetMesh() {
     emissiveIntensity: 0.4
   });
 
+  // Fuselage
   const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.6, 12, 24), matBody);
   fuse.rotation.x = -Math.PI/2;
   fuse.castShadow = true;
   root.add(fuse);
 
+  // Nose
   const nose = new THREE.Mesh(new THREE.ConeGeometry(0.6, 3, 24), matBody);
   nose.rotation.x = -Math.PI/2;
   nose.position.z = -7.5;
   nose.castShadow = true;
   root.add(nose);
 
+  // Cockpit
   const cockpit = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1.5, 8, 16), matGlass);
   cockpit.rotation.x = -Math.PI/2;
   cockpit.position.set(0, 0.8, -3);
   cockpit.castShadow = true;
   root.add(cockpit);
 
+  // Air Brakes
   const airBrakeGeo = new THREE.BoxGeometry(0.12, 0.6, 1.5);
   airBrakeGeo.translate(0, 0, 0.75);
 
@@ -1204,6 +1242,7 @@ function createJetMesh() {
   root.userData.airBrakeL = brakeL;
   root.userData.airBrakeR = brakeR;
 
+  // Wings
   const wingShape = new THREE.Shape();
   const ww = 6, hh = 4, rr = 0.6;
   wingShape.absarc(ww/2 - rr, hh/2 - rr, rr, 0, Math.PI / 2, false);
@@ -1233,6 +1272,7 @@ function createJetMesh() {
   wingR.castShadow = true;
   root.add(wingR);
 
+  // Exhaust
   const exGeo = new THREE.CylinderGeometry(0.7, 0.6, 0.8, 20);
   const exMesh = new THREE.Mesh(exGeo, matExhaust);
   exMesh.rotation.x = -Math.PI/2;
@@ -1240,6 +1280,7 @@ function createJetMesh() {
   exMesh.castShadow = true;
   root.add(exMesh);
 
+  // Afterburner flames
   const outerGeo = new THREE.ConeGeometry(0.5, 4.0, 16, 1, true);
   outerGeo.translate(0, 2.0, 0);
   outerGeo.rotateX(Math.PI / 2);
@@ -1268,6 +1309,7 @@ function createJetMesh() {
 
   root.userData.afterburners = [flameOuter, flameInner];
 
+  // Tail
   const tailGeo = new THREE.BoxGeometry(0.12, 3.1, 3);
   const tail = new THREE.Mesh(tailGeo, matBody);
   tail.position.set(0, 1.5, 5.1);
@@ -1275,6 +1317,7 @@ function createJetMesh() {
   tail.castShadow = true;
   root.add(tail);
 
+  // Horizontal stab
   const hStabGeo = new THREE.BoxGeometry(3.7, 0.12, 2.1);
   const hStab = new THREE.Mesh(hStabGeo, matBody);
   hStab.position.set(0, 0.25, 5.6);
@@ -1282,6 +1325,7 @@ function createJetMesh() {
   hStab.castShadow = true;
   root.add(hStab);
 
+  // Gear group (animated pivots)
   const gearGroup = new THREE.Group();
   root.add(gearGroup);
   root.userData.gearGroup = gearGroup;
@@ -1290,6 +1334,7 @@ function createJetMesh() {
   tireGeo.rotateZ(Math.PI/2);
   const tireMat = new THREE.MeshStandardMaterial({ color: VISUALS.colors.tire, roughness: 0.9, metalness: 0.0 });
 
+  // Nose gear pivot
   const nosePivot = new THREE.Group();
   gearGroup.add(nosePivot);
   nosePivot.position.set(0, -0.9, -5.0);
@@ -1300,6 +1345,7 @@ function createJetMesh() {
   noseWheel.castShadow = true;
   nosePivot.add(noseWheel);
 
+  // Main left gear pivot
   const mainLPivot = new THREE.Group();
   gearGroup.add(mainLPivot);
   mainLPivot.position.set(1.4, -0.9, 1.0);
@@ -1310,6 +1356,7 @@ function createJetMesh() {
   mainWheelL.castShadow = true;
   mainLPivot.add(mainWheelL);
 
+  // Main right gear pivot
   const mainRPivot = new THREE.Group();
   gearGroup.add(mainRPivot);
   mainRPivot.position.set(-1.4, -0.9, 1.0);
@@ -1320,6 +1367,7 @@ function createJetMesh() {
   mainWheelR.castShadow = true;
   mainRPivot.add(mainWheelR);
 
+  // vapor
   const vaporMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0, depthWrite: false });
   const vaporGeo = new THREE.PlaneGeometry(2, 0.4);
 
@@ -1336,6 +1384,7 @@ function createJetMesh() {
   root.userData.vaporL = vaporL;
   root.userData.vaporR = vaporR;
 
+  // dust
   const dustMat = new THREE.MeshBasicMaterial({ color: 0xaaaaaa, transparent: true, opacity: 0.0, depthWrite: false });
   const dustGeo = new THREE.PlaneGeometry(6, 3);
   dustGeo.rotateX(-Math.PI / 2);
@@ -1354,12 +1403,13 @@ function createWorld() {
   const size = WORLD.size;
   const segments = WORLD.segments;
 
+  // Build terrain mesh
   const groundGeo = new THREE.PlaneGeometry(size, size, segments, segments);
   const pos = groundGeo.attributes.position;
 
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
-    const zPlane = pos.getY(i);
+    const zPlane = pos.getY(i); // becomes world Z after rotate
     const worldH = getTerrainMeshWorldHeight_Analytic(x, zPlane);
     const localZ = worldH - WORLD.groundY;
     pos.setZ(i, localZ);
@@ -1381,6 +1431,7 @@ function createWorld() {
   ground.receiveShadow = true;
   scene.add(ground);
 
+  // Triangle wireframe overlay
   const triMat = new THREE.MeshBasicMaterial({
     color: 0x000000,
     wireframe: true,
@@ -1398,6 +1449,7 @@ function createWorld() {
   triGrid.renderOrder = 3;
   scene.add(triGrid);
 
+  // Runway
   const runway = new THREE.Mesh(
     new THREE.PlaneGeometry(RUNWAY_VISUAL_WIDTH, RUNWAY_VISUAL_LENGTH),
     new THREE.MeshStandardMaterial({ color: 0x222428, roughness: 0.82, metalness: 0.08 })
@@ -1408,6 +1460,7 @@ function createWorld() {
   runway.castShadow = true;
   scene.add(runway);
 
+  // Centerline dashes
   const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
   for (let z = -1600; z <= 1600; z += 200) {
     const mark = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 40), lineMat);
@@ -1416,6 +1469,7 @@ function createWorld() {
     scene.add(mark);
   }
 
+  // Edge lines
   const edgeMat = new THREE.MeshBasicMaterial({ color: 0xe0e0e0 });
   const leftEdge = new THREE.Mesh(new THREE.PlaneGeometry(1.5, RUNWAY_VISUAL_LENGTH), edgeMat);
   leftEdge.rotation.x = -Math.PI/2;
@@ -1426,6 +1480,7 @@ function createWorld() {
   rightEdge.position.x = (RUNWAY_VISUAL_WIDTH/2) - 1.5;
   scene.add(rightEdge);
 
+  // Touchdown zone stripes
   const TDZmat = new THREE.MeshBasicMaterial({ color: 0xf5f5f5 });
   for (let side of [-10, 10]) {
     for (let i = 0; i < 4; i++) {
@@ -1436,6 +1491,7 @@ function createWorld() {
     }
   }
 
+  // Trees
   const trunkGeo = new THREE.CylinderGeometry(0.5, 0.7, 6, 6);
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x4a3018 });
   const leafGeo = new THREE.ConeGeometry(5, 16, 12);
@@ -1444,6 +1500,7 @@ function createWorld() {
     const x = (Math.random() - 0.5) * 4500;
     const z = (Math.random() - 0.5) * 4500;
 
+    // don't put trees on runway zone
     if (Math.abs(x) < RUNWAY.halfW + 20 && Math.abs(z) < RUNWAY.halfL + 200) continue;
 
     const y = getGroundHeight(x, z);
@@ -1482,6 +1539,12 @@ function onResize() {
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
+
+  // Freeze sim while paused (render only)
+  if (paused) {
+    renderer.render(scene, camera);
+    return;
+  }
 
   updatePhysics(dt);
   updateGearAnimation(dt);
