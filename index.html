@@ -1379,19 +1379,13 @@ function createJetMesh() {
   // FUSELAGE (Hornet-ish)
   // -----------------------
   const fuseLen = 12.2;
-  const fuse = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.78, 0.95, fuseLen, 28),
-    matBody
-  );
+  const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.95, fuseLen, 28), matBody);
   fuse.rotation.x = -Math.PI / 2;
   fuse.castShadow = true;
   root.add(fuse);
 
   // Nose: taper + cap
-  const noseTaper = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.32, 0.82, 2.9, 28),
-    matBody
-  );
+  const noseTaper = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.82, 2.9, 28), matBody);
   noseTaper.rotation.x = -Math.PI / 2;
   noseTaper.position.z = -7.05;
   noseTaper.castShadow = true;
@@ -1433,16 +1427,16 @@ function createJetMesh() {
   root.add(deck);
 
   // -----------------------
-  // Wings (trapezoid / Hornet vibe)
+  // Wings
   // -----------------------
   function makeHornetWingHalf() {
     const s = new THREE.Shape();
-    s.moveTo(0.0, -1.10);   // root leading
-    s.lineTo(1.25, -0.75);  // blend
-    s.lineTo(6.10,  1.05);  // tip leading
-    s.lineTo(5.70,  4.55);  // tip trailing
-    s.lineTo(1.10,  3.85);  // inboard trailing
-    s.lineTo(0.0,   2.75);  // root trailing
+    s.moveTo(0.0, -1.10);
+    s.lineTo(1.25, -0.75);
+    s.lineTo(6.10,  1.05);
+    s.lineTo(5.70,  4.55);
+    s.lineTo(1.10,  3.85);
+    s.lineTo(0.0,   2.75);
     s.lineTo(0.0,  -1.10);
 
     const geo = new THREE.ExtrudeGeometry(s, {
@@ -1468,7 +1462,7 @@ function createJetMesh() {
   root.add(wingR);
 
   // -----------------------
-  // LEX (leading edge extensions)
+  // LEX
   // -----------------------
   function makeLexHalf() {
     const s = new THREE.Shape();
@@ -1546,8 +1540,8 @@ function createJetMesh() {
   root.add(exR);
 
   // -----------------------
-  // Afterburners (ALIGNED: anchored to nozzle positions)
-  // Keep sim hook: two objects in userData.afterburners
+  // Afterburners (FIXED: use InstancedMesh so they *cannot* drift)
+  // Keeps sim hook: root.userData.afterburners = [outer, inner]
   // -----------------------
   const outerFlameGeo = new THREE.ConeGeometry(0.48, 3.8, 16, 1, true);
   outerFlameGeo.translate(0, 1.9, 0);
@@ -1558,56 +1552,53 @@ function createJetMesh() {
   innerFlameGeo.rotateX(Math.PI / 2);
 
   const abOuterMat = new THREE.MeshBasicMaterial({
-    color: 0xffaa33,
-    transparent: true,
-    opacity: 0.55,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false
+    color: 0xffaa33, transparent: true, opacity: 0.55,
+    blending: THREE.AdditiveBlending, depthWrite: false
   });
 
   const abInnerMat = new THREE.MeshBasicMaterial({
-    color: 0x66c9ff,
-    transparent: true,
-    opacity: 0.8,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false
+    color: 0x66c9ff, transparent: true, opacity: 0.8,
+    blending: THREE.AdditiveBlending, depthWrite: false
   });
 
-  // These are the two objects your sim toggles
-  const flameOuterGroup = new THREE.Group();
-  const flameInnerGroup = new THREE.Group();
-  flameOuterGroup.visible = false;
-  flameInnerGroup.visible = false;
-  root.add(flameOuterGroup);
-  root.add(flameInnerGroup);
+  const flameOuter = new THREE.InstancedMesh(outerFlameGeo, abOuterMat, 2);
+  const flameInner = new THREE.InstancedMesh(innerFlameGeo, abInnerMat, 2);
+  flameOuter.visible = false;
+  flameInner.visible = false;
 
-  function addFlamePair(parentGroup, geo, mat, offsetZ) {
-    // Left anchor
-    const aL = new THREE.Group();
-    aL.position.copy(exL.position);
-    aL.rotation.copy(exL.rotation);
-    parentGroup.add(aL);
+  // Offsets from nozzle center to flame start (tweak if you want)
+  const OUTER_Z = 0.55;
+  const INNER_Z = 0.65;
 
-    const fL = new THREE.Mesh(geo, mat);
-    fL.position.set(0, 0, offsetZ);
-    aL.add(fL);
+  const _m = new THREE.Matrix4();
+  const _q = new THREE.Quaternion();
+  const _s = new THREE.Vector3(1, 1, 1);
+  const _p = new THREE.Vector3();
 
-    // Right anchor
-    const aR = new THREE.Group();
-    aR.position.copy(exR.position);
-    aR.rotation.copy(exR.rotation);
-    parentGroup.add(aR);
+  // instance 0 = left nozzle
+  _p.set(exL.position.x, exL.position.y, exL.position.z + OUTER_Z);
+  _m.compose(_p, _q, _s);
+  flameOuter.setMatrixAt(0, _m);
 
-    const fR = new THREE.Mesh(geo, mat);
-    fR.position.set(0, 0, offsetZ);
-    aR.add(fR);
-  }
+  _p.set(exL.position.x, exL.position.y, exL.position.z + INNER_Z);
+  _m.compose(_p, _q, _s);
+  flameInner.setMatrixAt(0, _m);
 
-  // Tune these two if you want them closer/farther from nozzle exit
-  addFlamePair(flameOuterGroup, outerFlameGeo, abOuterMat, 0.55);
-  addFlamePair(flameInnerGroup, innerFlameGeo, abInnerMat, 0.65);
+  // instance 1 = right nozzle
+  _p.set(exR.position.x, exR.position.y, exR.position.z + OUTER_Z);
+  _m.compose(_p, _q, _s);
+  flameOuter.setMatrixAt(1, _m);
 
-  root.userData.afterburners = [flameOuterGroup, flameInnerGroup];
+  _p.set(exR.position.x, exR.position.y, exR.position.z + INNER_Z);
+  _m.compose(_p, _q, _s);
+  flameInner.setMatrixAt(1, _m);
+
+  flameOuter.instanceMatrix.needsUpdate = true;
+  flameInner.instanceMatrix.needsUpdate = true;
+
+  root.add(flameOuter);
+  root.add(flameInner);
+  root.userData.afterburners = [flameOuter, flameInner];
 
   // -----------------------
   // Horizontal tails (stabs)
@@ -1627,8 +1618,8 @@ function createJetMesh() {
       bevelSize: 0.045,
       bevelSegments: 3
     });
-    geo.rotateX(Math.PI / 2);
 
+    geo.rotateX(Math.PI / 2);
     const m = new THREE.Mesh(geo, matBody);
     m.castShadow = true;
     return m;
@@ -1643,7 +1634,8 @@ function createJetMesh() {
   root.add(stabR);
 
   // -----------------------
-  // Twin vertical stabilizers (canted MORE)
+  // Twin vertical stabilizers (CANTED OUTWARD more)
+  // Outward cant = rotate around Z (roll), NOT forward/back pitch.
   // -----------------------
   function makeFin() {
     const finShape = new THREE.Shape();
@@ -1670,16 +1662,18 @@ function createJetMesh() {
   const finZ = 4.55;
   const finX = 0.72;
   const finY = 0.15;
-  const cant = 25 * Math.PI / 180; // <-- more angle than before
+
+  const CANT_DEG = 33; // <-- more outward cant
+  const cant = CANT_DEG * Math.PI / 180;
 
   const finL = makeFin();
   finL.position.set(finX, finY, finZ);
-  finL.rotation.z = -cant;
+  finL.rotation.set(0, 0, -cant); // outward
   root.add(finL);
 
   const finR = makeFin();
   finR.position.set(-finX, finY, finZ);
-  finR.rotation.z = cant;
+  finR.rotation.set(0, 0, cant); // outward
   root.add(finR);
 
   // -----------------------
@@ -1776,8 +1770,6 @@ function createJetMesh() {
 
   return root;
 }
-
-
 
 /* =========================
    World creation
