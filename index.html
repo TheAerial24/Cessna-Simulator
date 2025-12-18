@@ -1235,8 +1235,8 @@ function updateHUD() {
   // --- NEW warnings ---
   const offRunway = !isOnRunwayXZ(sim.pos.x, sim.pos.z);
 
-  const pullUpWarn  = (!sim.onGround && aglFtRaw <= 150);
-  const terrainWarn = (!sim.onGround && offRunway && aglFtRaw <= 300);
+  const pullUpWarn  = (!sim.onGround && aglFtRaw <= 300);
+  const terrainWarn = (!sim.onGround && offRunway && aglFtRaw <= 550);
   const overGWarn   = ((sim.gLoad || 1.0) >= 9.0);
 
   // Priority: PULL UP overrides TERRAIN (OVER G can show anytime)
