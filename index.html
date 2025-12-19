@@ -1379,7 +1379,7 @@ function createJetMesh() {
   // FUSELAGE (Hornet-ish)
   // -----------------------
   const fuseLen = 12.2;
-  const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.95, fuseLen, 28), matBody);
+  const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.3, fuseLen, 28), matBody);
   fuse.rotation.x = -Math.PI / 2;
   fuse.castShadow = true;
   root.add(fuse);
